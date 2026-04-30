@@ -1,0 +1,177 @@
+﻿# Polaris 能力与用法
+
+本文档统一使用 UTF-8 编码，只记录当前已经验证为“正常可控”或“可稳定执行”的入口。
+
+## 1. 当前保留能力
+
+### 1.1 基础设施与观测
+
+- 持续串口日志
+  - `COM12` = CP
+  - `COM13` = WB01
+  - `COM14` = AP
+- 串口命令下发与回显
+- `COM15` 控制的 `wb01 / csk` 断电重启
+- 状态快照与 diff
+- 短语播放 + 日志关联
+- 热点状态查询、热点重启
+- `vir_ssid / vir_pwd` 改写后重启验证
+
+### 1.2 当前已验证正常的云端控制
+
+- `probe-device`
+- `set-full-duplex`
+- `set-volume`
+- `set-multi-wakeup`
+- `set-accent`
+- `set-wakeup-threshold`
+- `set-mic`
+- `set-night-mode`
+- `set-wakeup-audio-upload`
+- `proactive-interaction`
+
+### 1.3 当前已验证可执行的自动化入口
+
+- 单条文档用例：`tools/execution/polaris_doc_case_runner.py`
+- suite 批量执行：`tools/execution/polaris_batch_runner.py`
+- audit：`tools/reporting/polaris_doc_case_audit.py`
+- 结果同步：`tools/reporting/polaris_status_sync.py`
+- 结果表导出：`tools/reporting/polaris_export_case_table.py`
+- FAIL 明细导出：`tools/reporting/export_fail_case_detail_md.py`
+- 自动化明细导出：`tools/reporting/export_auto_case_detail_md.py`
+
+## 2. 常用命令入口
+
+### 2.1 启动 live session
+
+```powershell
+$ts = Get-Date -Format yyyyMMddHHmmss
+New-Item -ItemType Directory -Path ("result\$ts") -Force | Out-Null
+Set-Content .current_result_dir (Resolve-Path ("result\$ts")).Path -Encoding ASCII
+python tools/device/polaris_serial_harness.py start --session-dir ("result\$ts")
+```
+
+### 2.2 串口直发与状态探测
+
+```powershell
+$session = Get-Content .current_result_dir
+python tools/device/polaris_serial_harness.py send --session-dir $session --port COM14 --command version
+python tools/device/polaris_serial_harness.py send --session-dir $session --port COM13 --command "listen version"
+python tools/probe/polaris_state_probe.py snapshot --label smoke
+```
+
+### 2.3 短语探测
+
+默认播放设备来自 `config/polaris_env.json -> default_playback_device_key`。
+
+```powershell
+python tools/probe/polaris_phrase_probe.py --text 小美小美 --observe-ms 15000 --label wake_smoke
+python tools/probe/polaris_phrase_probe.py --text 小美小美 --text 打开空调 --observe-ms 15000 --label wake_cmd_smoke
+```
+
+### 2.4 电源与网络
+
+```powershell
+python tools/device/polaris_power_control.py cycle --target wb01
+python tools/device/polaris_power_control.py cycle --target csk
+python tools/device/polaris_network_orchestrator.py hotspot-status
+python tools/device/polaris_network_orchestrator.py hotspot-cycle
+python tools/device/polaris_network_orchestrator.py vir-reboot --ssid pcwifi24 --pwd 12345678
+```
+
+### 2.5 云端控制
+
+```powershell
+python tools/cloud/polaris_app_control.py probe-device
+python tools/cloud/polaris_app_control.py set-full-duplex --enable 1 --timeout 15
+python tools/cloud/polaris_app_control.py set-volume --value 20
+python tools/cloud/polaris_app_control.py set-multi-wakeup --enable 0
+python tools/cloud/polaris_app_control.py set-accent --accent-id cantonese --enable-accent 0 --mixed-res-enable 0
+python tools/cloud/polaris_app_control.py set-wakeup-threshold --threshold 75
+python tools/cloud/polaris_app_control.py set-mic --enable 1
+python tools/cloud/polaris_app_control.py set-night-mode --enable 0 --time-from 23:00 --time-to 07:00 --volume 10 --awake-threshold 0
+python tools/cloud/polaris_app_control.py set-wakeup-audio-upload --enable 0
+python tools/cloud/polaris_app_control.py proactive-interaction --interrupt --end-session
+```
+
+### 2.6 文档用例与报告
+
+```powershell
+python tools/execution/polaris_doc_case_runner.py --case-id 美的空调_22 --device-key "YOUR_DEVICE_KEY"
+python tools/execution/polaris_batch_runner.py --suite-file spec\suites\offline_smoke.yaml --device-key "YOUR_DEVICE_KEY"
+python tools/reporting/polaris_doc_case_audit.py
+python tools/reporting/polaris_status_sync.py
+python tools/reporting/polaris_export_case_table.py --executed-only
+python tools/reporting/export_fail_case_detail_md.py
+python tools/reporting/export_auto_case_detail_md.py
+```
+
+## 3. 本轮已验证结果
+
+本轮基线 session：`result/20260423111046`
+
+### 3.1 基础设施
+
+已实际跑通：
+
+- 串口 logger、串口直发、state probe、phrase probe
+- `wb01` 掉电重启
+- `csk` 掉电重启
+- 热点状态查询
+- 热点关闭再打开
+- `vir_ssid / vir_pwd` 改写后重启并重新上线
+
+### 3.2 有本地读回或明确断言的正常控制
+
+- 音量：`30 -> 20`
+  - 最终 WB01 回读正常
+- 唤醒阈值：`80 -> 75`
+  - AP 回读正常
+- Mic 开关
+  - 关 mic 后探测结果为 `cp wake=1, ap wake=0`
+  - 开 mic 恢复后探测结果为 `cp/ap wake=1/1`
+- 默认唤醒词恢复
+  - 切回 `小美小美` 后探测恢复正常唤醒
+
+### 3.3 云端调用成功的控制项
+
+以下动作已在当前 DUT 上返回业务成功，并保留了本地证据：
+
+- 自然对话开关
+- 多设备唤醒开关
+- 方言开关
+- 夜间模式开关
+- 唤醒音频上传开关
+- 主动交互
+
+### 3.4 文档与报告链路
+
+已实际执行：
+
+- `polaris_doc_case_audit.py`
+- `polaris_doc_case_runner.py`
+- `polaris_batch_runner.py`
+- `polaris_status_sync.py`
+- `polaris_export_case_table.py`
+- `export_fail_case_detail_md.py`
+- `polaris_refresh_failure_diagnosis.py`
+- `export_auto_case_detail_md.py`
+
+最新状态汇总：`90 executed / 81 PASS / 3 FAIL / 6 BLOCKED / 625 SKIP`
+
+## 4. 当前明确排除项
+
+以下项目当前不作为“正常控制”能力：
+
+- `set-character-value`
+  - 当前返回 `code=501`。
+- `set-log`
+  - 云端 success，但本地 `log_lev` 未随 `level=2` 发生可验证变化。
+- 自定义唤醒词
+  - `客厅空调` 云端设置成功，但当前 CA3X 设备本地探测仍为 `0 wake`。
+
+## 5. 需要记住的边界
+
+- 用例 runner 能执行，不代表用例结果一定 PASS；最终判定仍依赖当前 DUT 行为。
+- 当前 `美的空调_22` 已能正常跑完，但结果是 FAIL，原因是 `successful_response_count=0`，这属于后续专项收口问题，不影响 skill 主能力使用。
+- 若后续重新验证 `set-log`、自定义唤醒词或音色切换通过，再补回本文件即可。

@@ -1,0 +1,12 @@
+# Local runtime artifacts intentionally excluded from this skill repo
+result/
+cache/
+outputs/
+fw/
+config/
+plan.md
+.current_result_dir
+.current_logger_pid
+__pycache__/
+*.pyc
+.DS_Store
