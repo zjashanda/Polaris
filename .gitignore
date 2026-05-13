@@ -1,12 +1,17 @@
-# Local runtime artifacts intentionally excluded from this skill repo
+# runtime evidence and local state
 result/
 cache/
-outputs/
 fw/
-config/
+outputs/
+satellite/
 plan.md
-.current_result_dir
-.current_logger_pid
+.current_*
+
+# Python/cache artifacts
 __pycache__/
 *.pyc
-.DS_Store
+
+# generated audio
+*.pcm
+*.wav
+*.mp3

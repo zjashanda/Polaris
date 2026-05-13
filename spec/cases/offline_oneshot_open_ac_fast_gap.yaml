@@ -1,0 +1,54 @@
+case_id: CASE_OFFLINE_ONESHOT_OPEN_AC_FAST_001
+name: 离线 one-shot 唤醒后快速打开空调
+mode: offline
+description: 对应 doc 用例“美的空调_28”，模拟“小美小美，打开空调”两句话间隔小于 200ms 的离线 one-shot 场景。
+playback:
+  sequence:
+    - type: tts
+      text: 小美小美
+    - type: silence
+      duration_ms: 10
+    - type: tts
+      text: 打开空调
+observe_after_ms: 14000
+expected:
+  - id: com12_wake
+    port: COM12
+    match_type: contains
+    pattern: "WAKE("
+    required: true
+  - id: com12_command_keyword
+    port: COM12
+    match_type: regex
+    pattern: "KEY=1\\(kong tiao kai ji\\)"
+    required: true
+  - id: com14_wakeup_callback
+    port: COM14
+    match_type: contains
+    pattern: "wakeup_callback, keyword: xiao mei xiao mei"
+    required: true
+  - id: com14_offline_asr
+    port: COM14
+    match_type: contains
+    pattern: "offline_asr_callbak, keyword: kong tiao kai ji"
+    required: true
+  - id: com13_offline_wakeup
+    port: COM13
+    match_type: contains
+    pattern: "offline_wakeup"
+    required: true
+  - id: com13_offline_asr
+    port: COM13
+    match_type: contains
+    pattern: "offline_asr_callbak, keyword: kong tiao kai ji"
+    required: true
+  - id: com14_tone_open_power
+    port: COM14
+    match_type: contains
+    pattern: "play next tone 3:"
+    required: true
+  - id: com13_player_done
+    port: COM13
+    match_type: contains
+    pattern: "local player status 6 PLAYBACK_COMPLETE"
+    required: true

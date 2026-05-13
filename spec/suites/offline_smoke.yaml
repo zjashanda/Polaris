@@ -1,0 +1,6 @@
+suite_id: SUITE_OFFLINE_SMOKE_001
+name: 离线基础冒烟
+description: 使用当前 doc 目录可直接映射的离线核心用例，验证 runner、判定逻辑和设备链路。
+cases:
+  - spec/cases/offline_wakeup.yaml
+  - spec/cases/offline_wakeup_open_ac.yaml

@@ -1,4 +1,4 @@
-﻿# Polaris 能力与用法
+# Polaris 能力与用法
 
 本文档统一使用 UTF-8 编码，只记录当前已经验证为“正常可控”或“可稳定执行”的入口。
 
@@ -8,10 +8,10 @@
 
 - 持续串口日志
   - `COM12` = CP
-  - `COM13` = WB01
+  - `COM13` = ASR
   - `COM14` = AP
 - 串口命令下发与回显
-- `COM15` 控制的 `wb01 / csk` 断电重启
+- `COM15` 控制的 `asr / csk` 断电重启
 - 状态快照与 diff
 - 短语播放 + 日志关联
 - 热点状态查询、热点重启
@@ -60,6 +60,23 @@ python tools/device/polaris_serial_harness.py send --session-dir $session --port
 python tools/probe/polaris_state_probe.py snapshot --label smoke
 ```
 
+串口默认从 `config/polaris_local_ports.json` 读取；显式传入 `--port` 时会同步回本地配置。也可以先查看或手动同步配置：
+
+```powershell
+python tools/core/polaris_config.py show
+python tools/core/polaris_config.py set --role ap --port COM14
+python tools/core/polaris_config.py set --role asr --port COM13
+```
+
+推荐按角色发送，避免换机器后改命令：
+
+```powershell
+python tools/device/polaris_serial_harness.py send --session-dir $session --role ap --command version
+python tools/device/polaris_serial_harness.py send --session-dir $session --role asr --command "listen version"
+```
+
+旧工具里仍写死的 `COM12/COM13/COM14` 会在 `tools/core/polaris_runtime.py` 中按 `cp/asr/ap` 角色映射到本地配置里的实际端口。
+
 ### 2.3 短语探测
 
 默认播放设备来自 `config/polaris_env.json -> default_playback_device_key`。
@@ -72,12 +89,14 @@ python tools/probe/polaris_phrase_probe.py --text 小美小美 --text 打开空�
 ### 2.4 电源与网络
 
 ```powershell
-python tools/device/polaris_power_control.py cycle --target wb01
+python tools/device/polaris_power_control.py cycle --target asr
 python tools/device/polaris_power_control.py cycle --target csk
 python tools/device/polaris_network_orchestrator.py hotspot-status
 python tools/device/polaris_network_orchestrator.py hotspot-cycle
 python tools/device/polaris_network_orchestrator.py vir-reboot --ssid pcwifi24 --pwd 12345678
 ```
+
+`polaris_power_control.py` 未指定 `--port` 时读取配置里的 `control` 串口；指定 `--port COMxx` 时会同步 `control=COMxx` 到 `config/polaris_local_ports.json`。
 
 ### 2.5 云端控制
 
@@ -115,7 +134,7 @@ python tools/reporting/export_auto_case_detail_md.py
 已实际跑通：
 
 - 串口 logger、串口直发、state probe、phrase probe
-- `wb01` 掉电重启
+- `asr` 掉电重启
 - `csk` 掉电重启
 - 热点状态查询
 - 热点关闭再打开
@@ -124,7 +143,7 @@ python tools/reporting/export_auto_case_detail_md.py
 ### 3.2 有本地读回或明确断言的正常控制
 
 - 音量：`30 -> 20`
-  - 最终 WB01 回读正常
+  - 最终 ASR 回读正常
 - 唤醒阈值：`80 -> 75`
   - AP 回读正常
 - Mic 开关
@@ -175,3 +194,25 @@ python tools/reporting/export_auto_case_detail_md.py
 - 用例 runner 能执行，不代表用例结果一定 PASS；最终判定仍依赖当前 DUT 行为。
 - 当前 `美的空调_22` 已能正常跑完，但结果是 FAIL，原因是 `successful_response_count=0`，这属于后续专项收口问题，不影响 skill 主能力使用。
 - 若后续重新验证 `set-log`、自定义唤醒词或音色切换通过，再补回本文件即可。
+
+## 6. 模块化验证池入口
+
+当前已新增 Polaris 专用模块化验证池，用来沉淀唤醒、超时、全/半双工、联网、云控设置、夜间模式、音量、空调命令词、在线/离线 ASR 和 FAIL 收敛方法。
+
+常用入口：
+
+```powershell
+python tools/pool/polaris_validation_pool.py validate
+python tools/pool/polaris_validation_pool.py classify --project-key polaris_midea_ac --out outputs\polaris_pool_match.md SKILL.md capabilities-and-usage.md environment-and-migration.md references
+python tools/suite/run_polaris_formal_suite.py --tag plan_only
+```
+
+读取顺序：
+
+1. `references/modular-validation-workflow.md`
+2. `references/evidence-rules.md`
+3. `references/validation-pool/INDEX.md`
+4. 命中的具体模块，例如 `wake-session.md`、`duplex-mode.md`、`network-online.md`
+5. `references/project-profiles/polaris_midea_ac.json`
+
+默认原则：raw FAIL 先收敛验证路径；只有前置满足、采集有效、需求明确且行为矛盾时，才保留最终固件 FAIL。

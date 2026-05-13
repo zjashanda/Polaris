@@ -1,0 +1,165 @@
+{
+  "updated_at": "2026-04-23T11:58:43",
+  "workspace": "D:\\revolution4s\\Polaris",
+  "active_session": "D:\\revolution4s\\Polaris\\result\\20260423111046",
+  "logger_pid": 47956,
+  "target_playback_device_key": "VID_8765&PID_5678:9_2A847557_7_0000",
+  "latest_doc_case_counts": {
+    "total": 715,
+    "auto_executable_now": 90,
+    "executed": 90,
+    "pass": 81,
+    "fail": 3,
+    "blocked": 6,
+    "partial": 0,
+    "skip": 625
+  },
+  "latest_case_table_artifact_dir": "D:\\revolution4s\\Polaris\\result\\20260423111046\\artifacts\\reporting\\case_tables\\20260423115823889_case_result_table",
+  "baseline_after_recovery": {
+    "state_probe": "D:\\revolution4s\\Polaris\\result\\20260420091943\\state_probe_20260420103049281\\after_controlled_reboot_rebaseline_state.json",
+    "phrase_probe": "D:\\revolution4s\\Polaris\\result\\20260420091943\\phrase_probe_after_controlled_reboot_rebaseline_20260420103053814\\probe_summary.json",
+    "tts_marker_probe": "D:\\revolution4s\\Polaris\\result\\20260420091943\\phrase_probe_after_tts_marker_regex_patch_20260420103548124\\probe_summary.json",
+    "controlled_reset": {
+      "method": "COM15 uut-reset.on/off",
+      "ap_boot_reason": "POWER|HWPIN 0x03",
+      "wb_boot_reason": "POWERON 0",
+      "env": "SIT (env=2)",
+      "wake_word": "xiao mei xiao mei",
+      "ssid": "pcwifi24",
+      "mac": "8C:3F:44:2B:7A:D9",
+      "iot_id": "177021372191476"
+    },
+    "minimal_chain_verdict": "PASS",
+    "minimal_chain_summary": [
+      "??? CP/AP ??????????",
+      "??? ??+????? ????? kong tiao kai ji",
+      "??? ??+???? ????? online ASR ??? TTS"
+    ]
+  },
+  "current_conclusion": {
+    "primary_state": "auto_executable_scope_converged",
+    "primary_reason": "Current doc auto-executable scope is stable at 90 executed / 81 PASS / 3 FAIL / 6 BLOCKED.",
+    "remaining_blocker": "real_device_behavior_gaps_and_external_cloud_closure",
+    "remaining_blocker_reason": "Remaining issues are now dominated by real device/config behavior mismatches plus cloud-side artifact retrieval gaps, not by generic regex assertions.",
+    "parser_or_regex_status": "Recent reruns closed case 21 with behavior-first empty-NLU evidence, re-judged case 1 with the CA3X/T6 note-aligned offline boot prompt chain, and used learnCase model-applicability evidence to move the CA3X-inapplicable single-mic wake-word families out of the executable set.",
+    "local_logger_status": "continuous logger healthy on COM12/COM13/COM14 throughout the current session",
+    "runner_family_coverage": "22 runner kinds covered in the current auto-executable sweep",
+    "tooling_fixups_this_round": [
+      "Reworked online_empty_nlu_case to close on online ASR + asrInvalid audioBroadcast evidence instead of a fragile AP cloud-TTS play count.",
+      "Allowed positive wake-word switch cases to use AP prompt start/stop markers when WB playback end markers are absent.",
+      "Re-ran case 1 under the same continuous logging session and aligned the offline boot prompt assertion with the CA3X/T6 note-backed historical evidence.",
+      "Applied learnCase note-based model gating so CA3X can skip the non-applicable single-mic wake-word family (61~76) and the dependent room-name wake-word persistence case 685 before the baseline is exported."
+    ]
+  },
+  "representative_results": {
+    "pass": {
+      "美的空调_1": {
+        "judge": "",
+        "summary": ""
+      },
+      "美的空调_20": {
+        "judge": "",
+        "summary": ""
+      },
+      "美的空调_21": {
+        "judge": "",
+        "summary": ""
+      },
+      "美的空调_613": {
+        "judge": "",
+        "summary": ""
+      },
+      "美的空调_684": {
+        "judge": "",
+        "summary": ""
+      },
+      "美的空调_705": {
+        "judge": "",
+        "summary": ""
+      }
+    },
+    "fail": {
+      "????_137": {
+        "category": "natural_dialog_half_duplex_timeout_prompt_mismatch",
+        "cases": [
+          "美的空调_137"
+        ],
+        "summary": "Half-duplex + closure scenario still emits a timeout closure prompt that the doc expectation forbids."
+      },
+      "????_51/137": {
+        "category": "other_functional_failures",
+        "cases": [
+          "美的空调_51",
+          "美的空调_137"
+        ],
+        "summary": "Offline TTS resource playability and half-duplex timeout prompt behavior still show real device/resource mismatches."
+      }
+    },
+    "blocked": {
+      "????_709~714": {
+        "category": "cloud_artifact_retrieval_pending",
+        "cases": [
+          "美的空调_709",
+          "美的空调_710",
+          "美的空调_711",
+          "美的空调_712",
+          "美的空调_713",
+          "美的空调_714"
+        ],
+        "summary": "Local logs already prove trigger-side behavior, but cloud-side retrieval/download is still missing."
+      }
+    }
+  },
+  "failure_buckets": [
+    {
+      "category": "cloud_artifact_closure_pending",
+      "count": 6,
+      "cases": [
+        "美的空调_709",
+        "美的空调_710",
+        "美的空调_711",
+        "美的空调_712",
+        "美的空调_713",
+        "美的空调_714"
+      ],
+      "summary": "Local trigger, log markers, and upload/log-level evidence are present, but cloud-side artifact retrieval is still required for final closure.",
+      "results": {
+        "PASS": 0,
+        "FAIL": 0,
+        "BLOCKED": 6
+      }
+    },
+    {
+      "category": "other_functional_failures",
+      "count": 2,
+      "cases": [
+        "美的空调_51",
+        "美的空调_137"
+      ],
+      "summary": "Remaining failures are concrete behavior mismatches: offline TTS resource playability and half-duplex timeout prompt behavior.",
+      "results": {
+        "PASS": 0,
+        "FAIL": 2,
+        "BLOCKED": 0
+      }
+    }
+  ],
+  "marker_extraction_evidence": {
+    "audio_broadcast_mid": "??? AP cloud.instructions.audioBroadcast ?? mid",
+    "cloud_tts_url_id": "??? stream_tts / TTS recv / TTS playing ?? url id",
+    "playback_markers": "??? status=play/status=stop/play complete/tone player evt 6",
+    "note": "wake/asr/tts/broadcast-id/start-stop marker ???? runner ? probe ?????"
+  },
+  "coverage_guard": {
+    "non_pass_case_total": 9,
+    "bucket_case_total": 8,
+    "uncovered_non_pass_cases": [
+      "美的空调_22"
+    ]
+  },
+  "next_actions": [
+    "If cloud-side retrieval becomes available, close ????_709~714 with downloaded evidence instead of local trigger-only proof.",
+    "If firmware/app capability changes, re-run the remaining real-fail families first: 44/45/51/137.",
+    "Keep using config/polaris_doc_case_status.json as the source of truth for the latest 90-case active baseline."
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "project_id": "polaris_midea_ac",
+  "display_name": "Polaris 美的空调语音设备",
+  "adapter": "polaris-local-tools",
+  "workspace_root": ".",
+  "config_files": [
+    "config/polaris_local_ports.json",
+    "config/polaris_env.json",
+    "config/polaris_doc_case_status.json",
+    "config/polaris_validation_reference.md"
+  ],
+  "session_marker": ".current_result_dir",
+  "default_ports": {
+    "cp": "COM12",
+    "asr": "COM13",
+    "ap": "COM14",
+    "control": "COM15",
+    "wb01_legacy_alias": "COM13"
+  },
+  "default_cloud_env": "SIT",
+  "detect": {
+    "path_keywords": [
+      "Polaris",
+      "美的",
+      "空调",
+      "CA3X"
+    ],
+    "required_any_files": [
+      "SKILL.md",
+      "capabilities-and-usage.md",
+      "environment-and-migration.md"
+    ],
+    "tool_keywords": [
+      "polaris_phrase_probe.py",
+      "polaris_app_control.py",
+      "polaris_doc_case_runner.py"
+    ]
+  },
+  "stages": [
+    {
+      "name": "validation_pool_classify",
+      "kind": "classify"
+    },
+    {
+      "name": "environment_gate",
+      "kind": "manual_gate",
+      "required": [
+        "heartbeat",
+        "playback",
+        "deviceinfo",
+        "network_or_offline_scope"
+      ]
+    },
+    {
+      "name": "state_probe",
+      "kind": "existing_tool",
+      "cmd": [
+        "python",
+        "tools/probe/polaris_state_probe.py",
+        "snapshot",
+        "--label",
+        "formal_suite_gate"
+      ]
+    },
+    {
+      "name": "wake_smoke",
+      "kind": "existing_tool",
+      "cmd": [
+        "python",
+        "tools/probe/polaris_phrase_probe.py",
+        "--text",
+        "小美小美",
+        "--observe-ms",
+        "15000",
+        "--label",
+        "formal_suite_wake_smoke"
+      ]
+    },
+    {
+      "name": "cloud_probe",
+      "kind": "existing_tool",
+      "cmd": [
+        "python",
+        "tools/cloud/polaris_app_control.py",
+        "probe-device"
+      ]
+    },
+    {
+      "name": "status_sync",
+      "kind": "existing_tool",
+      "cmd": [
+        "python",
+        "tools/reporting/polaris_status_sync.py"
+      ]
+    }
+  ],
+  "notes": [
+    "该 profile 先作为统一 suite 骨架；默认 plan-only 不直接抢占串口或改变设备状态。",
+    "当前串口映射：COM14=cskap，COM12=cskcp，COM13=asr，COM15=上下电控制串口。",
+    "真正执行前必须确认当前 session、heartbeat、播放链路、联网状态和设备身份。",
+    "项目差异写入本 profile 或 Polaris adapter；通用方法写入 references/validation-pool。"
+  ]
+}

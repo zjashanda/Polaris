@@ -1,4 +1,4 @@
-﻿---
+---
 name: polaris-device-validation
 description: 用于在本仓库中验证 Polaris 系列美的空调语音设备，覆盖串口日志、COM15 电源控制、热点编排、短语探测、已验证正常的云端控制、文档用例执行与报告同步。
 ---
@@ -14,7 +14,7 @@ description: 用于在本仓库中验证 Polaris 系列美的空调语音设备�
 - 基础设施与观测
   - `COM12 / COM13 / COM14` 持续日志采集
   - 串口命令下发与回显确认
-  - `COM15` 控制的 `wb01` / `csk` 断电重启
+  - `COM15` 控制的 `asr` / `csk` 断电重启
   - 设备状态快照、差异比对、短语探测
   - Windows 热点状态查询、热点重启、`vir_ssid/vir_pwd` 下发后重启验证
 - 已验证正常的云端控制
@@ -55,6 +55,31 @@ description: 用于在本仓库中验证 Polaris 系列美的空调语音设备�
    - `result/<session>/logs/live/heartbeat.json` 心跳正常
    - `deviceinfo/state_probe` 能拿到 `iot_id/mac/wakeup_id`
    - 默认播放设备能让 DUT 真正听到音频
+
+## 本地串口配置
+
+当前本机串口映射写入 `config/polaris_local_ports.json`。工具命令未显式指定串口时，默认读取该配置；显式指定串口时，会同步对应角色到该配置文件。
+
+当前角色：
+
+- `ap / cskap`：`COM14`
+- `cp / cskcp`：`COM12`
+- `asr`：`COM13`
+- `control`：`COM15`
+
+常用示例：
+
+```powershell
+python tools/core/polaris_config.py show
+python tools/core/polaris_config.py set --role control --port COM15
+python tools/device/polaris_serial_harness.py send --role ap --command version
+python tools/device/polaris_serial_harness.py send --role asr --command "listen version"
+python tools/device/polaris_power_control.py cycle --target asr
+```
+
+兼容说明：旧工具中仍写死的 `COM12/COM13/COM14` 会在运行时按角色映射到本地配置里的 `cp/asr/ap` 端口，避免换机器后逐个改脚本。
+
+注意：串口 logger 启动时读取一次配置；如果运行中修改了 COM 映射，需要重启 logger 才能让采集线程切到新端口。
 
 ## 典型工作流
 
@@ -129,3 +154,23 @@ description: 用于在本仓库中验证 Polaris 系列美的空调语音设备�
 - 本 skill 默认面向当前 Polaris 串口拓扑与日志语义；如果新设备拓扑变了，先改环境再跑功能。
 - “接口可调用”不等于“设备功能完全支持”；当前文档已只保留确认正常的能力，其余项目统一放到边界说明。
 - 如果后续再次验证通过 `set-log`、自定义唤醒词或音色切换，再把它们补回主技能即可。
+
+## 模块化验证池落地规则
+
+后续处理新功能、需求变更、断言收敛或正式全集前，优先读取：
+
+1. `references/modular-validation-workflow.md`
+2. `references/validation-pool/INDEX.md`
+3. `references/validation-pool/schema.md`
+4. `references/evidence-rules.md`
+5. 当前命中的 `references/validation-pool/*.md`
+
+新增功能时，先把需求拆成“功能意图 + 触发 + 前置状态 + 期望输出 + 状态变化 + 证据来源”，再匹配验证池模块。不得直接把历史 PASS/FAIL 或某一轮日志当成新功能默认断言。
+
+统一 suite 骨架入口：
+
+```powershell
+python tools/suite/run_polaris_formal_suite.py --tag plan_only
+```
+
+该命令默认只做 plan-only：分类、门禁文件检查和报告生成，不占用串口、不调用云端、不播放音频。确认执行范围后，才使用 `--execute` 运行 profile 中的现有工具阶段。

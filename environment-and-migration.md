@@ -37,14 +37,31 @@
 当前默认拓扑：
 
 - `COM12` = CP，只读日志
-- `COM13` = WB01，可写
+- `COM13` = ASR，可写
 - `COM14` = AP，可写
 - `COM15` = 电源/复位控制，可写
 
+本机串口映射统一写在：
+
+- `config/polaris_local_ports.json`
+
+规则：
+
+- 工具命令未显式指定串口时，默认读取 `config/polaris_local_ports.json`。
+- 工具命令显式指定串口时，会把该角色的新串口同步回 `config/polaris_local_ports.json`。
+- `config/polaris_env.json` 保留运行环境与历史兼容字段；本机串口覆盖以 `config/polaris_local_ports.json` 为准。
+
 如果换机器后 COM 号变了，优先修这里：
 
-- `tools/device/polaris_serial_harness.py`
-- `tools/device/polaris_power_control.py`
+- 查看当前配置：`python tools/core/polaris_config.py show`
+- 手动同步角色：`python tools/core/polaris_config.py set --role ap --port COM14`
+- 手动同步控制串口：`python tools/core/polaris_config.py set --role control --port COM15`
+- 直接执行带显式串口的命令，例如 `python tools/device/polaris_power_control.py cycle --target asr --port COM15`
+- 或手动编辑 `config/polaris_local_ports.json`
+
+兼容规则：老脚本里写死的 `COM12/COM13/COM14` 不再直接视为物理端口，而是按 `cp/asr/ap` 角色映射到本地配置中的实际端口；如果确实要向某个物理端口直发，使用支持 `--port` 的工具显式指定。
+
+注意：串口 logger 启动时会读取一次本地配置；如果运行中改了 COM 映射，需要停止并重启 `polaris_serial_harness.py start` 后新映射才会进入采集线程。
 
 ### 2.2 播放链路
 
@@ -123,6 +140,13 @@ python tools/device/polaris_serial_harness.py start --session-dir ("result\$ts")
 $session = Get-Content .current_result_dir
 python tools/device/polaris_serial_harness.py send --session-dir $session --port COM14 --command version
 python tools/device/polaris_serial_harness.py send --session-dir $session --port COM13 --command "listen version"
+```
+
+未指定 `--port` 时，`send` 默认按 `--role` 读取本地配置：
+
+```powershell
+python tools/device/polaris_serial_harness.py send --session-dir $session --role ap --command version
+python tools/device/polaris_serial_harness.py send --session-dir $session --role asr --command "listen version"
 ```
 
 ### 第 3 步：确认播放链路
