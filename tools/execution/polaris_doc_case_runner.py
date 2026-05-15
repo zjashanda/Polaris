@@ -48,7 +48,7 @@ from tools.probe.polaris_state_probe import diff_states, snapshot
 CP_WAKE_RE = re.compile(r"WAKE\(1\)", re.I)
 CP_CMD_RE = re.compile(r"WAKE\(0\)", re.I)
 AP_WAKE_RE = re.compile(r"wakeup_callback, keyword:", re.I)
-WB_WAKE_RE = re.compile(r"offline_wakeup", re.I)
+WB_WAKE_RE = re.compile(r"(?:offline[_ ]wakeup|line_wakeup)", re.I)
 WB_ONLINE_WAKE_RE = re.compile(r"online_wakeup", re.I)
 AP_ASR_RE = re.compile(r"offline_asr_callbak", re.I)
 WB_ASR_RE = re.compile(r"offline_asr_callbak", re.I)
@@ -114,8 +114,10 @@ ONLINE_SIGNAL_PATTERNS = (
     re.compile(r"cloud\.online\.reply", re.I),
     re.compile(r"device\.event\.keepAlive\.ack", re.I),
     re.compile(r"login success", re.I),
-    re.compile(r"connect_route:user_ssid=", re.I),
     re.compile(r"Cur router rssi=", re.I),
+    re.compile(r"route info upload ok", re.I),
+    re.compile(r"get heartbeat from cloud", re.I),
+    re.compile(r"cloud status\s*:0x04", re.I),
 )
 
 COMMON_MOJIBAKE_ALIASES = {
@@ -257,7 +259,14 @@ def network_window_indicates_online(window: Dict[str, Any]) -> bool:
     analysis = window.get("analysis", {})
     return any(
         int(analysis.get(key, 0) or 0) > 0
-        for key in ["connect_route_count", "rssi_ok_count", "cloud_login_count", "keepalive_count"]
+        for key in [
+            "rssi_ok_count",
+            "cloud_login_count",
+            "keepalive_count",
+            "route_info_upload_count",
+            "heartbeat_count",
+            "cloud_status_online_count",
+        ]
     )
 
 
@@ -530,6 +539,20 @@ def parse_json_substring(line: str, start_index: int = 0) -> Optional[dict]:
     return None
 
 
+def split_serial_log_lines(text: str) -> List[str]:
+    """Split serial logs only on CR/LF so mojibake bytes like U+0085 don't break JSON payloads."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def read_serial_log_lines(path: Path, *, errors: str = "ignore") -> List[str]:
+    if not path.exists():
+        return []
+    return split_serial_log_lines(path.read_text(encoding="utf-8", errors=errors))
+
+
 def extract_algo_info_payloads(lines: List[str]) -> List[dict]:
     records: List[dict] = []
     for line in lines:
@@ -738,16 +761,16 @@ def read_clean_logs_from_artifact_dir(artifact_dir: Path) -> Dict[str, List[str]
         lines: List[str] = []
         window_path = window_dir / f"{port}.log"
         if window_path.exists():
-            lines.extend(window_path.read_text(encoding="utf-8", errors="ignore").splitlines())
+            lines.extend(read_serial_log_lines(window_path, errors="ignore"))
         else:
             # Cloud/app setup helpers store per-port windows directly under the
             # artifact root, not under window_logs/.
             root_window = artifact_dir / f"{port}_window.log"
             root_excerpt = artifact_dir / f"{port}_excerpt.log"
             if root_window.exists():
-                lines.extend(root_window.read_text(encoding="utf-8", errors="ignore").splitlines())
+                lines.extend(read_serial_log_lines(root_window, errors="ignore"))
             if root_excerpt.exists():
-                lines.extend(root_excerpt.read_text(encoding="utf-8", errors="ignore").splitlines())
+                lines.extend(read_serial_log_lines(root_excerpt, errors="ignore"))
         raw_logs[port] = lines
     return sanitize_logs(raw_logs)
 
@@ -1846,7 +1869,8 @@ def collect_dialog_behavior_metrics(clean_logs: Dict[str, List[str]]) -> dict:
     successful_response_records = [
         item
         for item in audio_records
-        if str(item.get("skill_id", "")).strip().lower() != "asrinvalid" and item.get("urls")
+        if str(item.get("skill_id", "")).strip().lower() != "asrinvalid"
+        and (item.get("urls") or item.get("texts"))
     ]
     asr_invalid_records = [
         item for item in audio_records if str(item.get("skill_id", "")).strip().lower() == "asrinvalid"
@@ -2429,7 +2453,7 @@ def read_clean_logs_from_execution(execution_dir: Path) -> Dict[str, List[str]]:
         if not path.exists():
             clean_logs[port] = []
             continue
-        clean_logs[port] = path.read_text(encoding="utf-8").splitlines()
+        clean_logs[port] = read_serial_log_lines(path, errors="strict")
     return clean_logs
 
 
@@ -2502,7 +2526,7 @@ def evaluate_threshold_case(
     if threshold_setup_record and threshold_setup_record.get("artifact_dir"):
         setup_path = Path(str(threshold_setup_record["artifact_dir"])) / "COM14_window.log"
         if setup_path.exists():
-            setup_ap_lines = setup_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            setup_ap_lines = read_serial_log_lines(setup_path, errors="ignore")
     setup_info = extract_threshold_setup_info(setup_ap_lines)
 
     add_check("cp_wake_count", metrics["cp_wake_count"], f">={rules['min_cp_wake']}", metrics["cp_wake_count"] >= rules["min_cp_wake"])
@@ -4084,7 +4108,7 @@ def run_app_dialog_config_case(case, rules: dict, execution_dir: Path, device_ke
 def read_text_lines(path: Path) -> List[str]:
     if not path.exists():
         return []
-    return path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    return read_serial_log_lines(path, errors="ignore")
 
 
 def run_app_dialog_announce_case(case, rules: dict, execution_dir: Path, device_key: str, session_dir: Path, tone_catalog: dict) -> Path:
@@ -5523,7 +5547,7 @@ def run_algo_version_upload_case(case, rules: dict, execution_dir: Path, device_
 
         power_window_dir = Path(power_summary["artifact_dir"]) / "window_logs"
         raw_logs = {
-            port: (power_window_dir / f"{port}.log").read_text(encoding="utf-8", errors="replace").splitlines()
+            port: read_serial_log_lines(power_window_dir / f"{port}.log", errors="replace")
             for port in ["COM12", "COM13", "COM14"]
         }
         raw_logs["COM14"].extend(version_lines)
@@ -5785,7 +5809,7 @@ def run_power_broadcast_case(case, rules: dict, execution_dir: Path, device_key:
 
         window_dir = Path(power_summary["artifact_dir"]) / "window_logs"
         raw_logs = {
-            port: (window_dir / f"{port}.log").read_text(encoding="utf-8", errors="replace").splitlines()
+            port: read_serial_log_lines(window_dir / f"{port}.log", errors="replace")
             for port in ["COM12", "COM13", "COM14"]
         }
         clean_logs = sanitize_logs(raw_logs)
@@ -5898,7 +5922,7 @@ def run_network_disconnect_case(case, rules: dict, execution_dir: Path, device_k
 
         artifact_dir = Path(disconnect_summary["artifact_dir"])
         raw_logs = {
-            port: (artifact_dir / f"window_{port}.log").read_text(encoding="utf-8", errors="replace").splitlines()
+            port: read_serial_log_lines(artifact_dir / f"window_{port}.log", errors="replace")
             for port in ["COM12", "COM13", "COM14"]
         }
         clean_logs = sanitize_logs(raw_logs)

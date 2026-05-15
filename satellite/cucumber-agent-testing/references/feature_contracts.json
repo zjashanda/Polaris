@@ -1,0 +1,389 @@
+{
+  "version": 1,
+  "source": [
+    "satellite/voice-test-plan-designer/references/??????.md",
+    "references/validation-pool/wake-session.md",
+    "references/validation-pool/duplex-mode.md",
+    "references/validation-pool/ac-control-command.md",
+    "Polaris ?????????"
+  ],
+  "contracts": {
+    "wake.first_wake": {
+      "title": "????",
+      "support_status": "automated",
+      "intent": "???????????????????????/?????",
+      "parameters": {
+        "wake_word": "????",
+        "observe_ms": 15000
+      },
+      "preconditions": [
+        "serial.ready",
+        "audio.playback_ready",
+        "session.idle"
+      ],
+      "actions": [
+        "audio.play_wake_word"
+      ],
+      "evidence": [
+        "CP: WAKE(1)",
+        "AP: wakeup_callback",
+        "ASR: offline_wakeup/online_wakeup",
+        "player: tone/TTS status"
+      ],
+      "assertions": [
+        {
+          "metric": "playback_returncode",
+          "operator": "==",
+          "expected": 0,
+          "owner": "audio/playback"
+        },
+        {
+          "metric": "cp_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "firmware-or-device"
+        },
+        {
+          "metric": "ap_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "firmware-or-device"
+        },
+        {
+          "metric": "asr_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "asr-device"
+        }
+      ],
+      "failure_split": [
+        "?????????? -> ????/????",
+        "?????? -> logger/????",
+        "?????? wake -> ?????????????????",
+        "??????? -> ? CP/AP/ASR ??????"
+      ]
+    },
+    "wake.recognition_mode_wake": {
+      "title": "???????",
+      "support_status": "automated",
+      "intent": "?????????????????????????????????/???????",
+      "parameters": {
+        "wake_word": "????",
+        "recognition_timeout_s": 15,
+        "second_wake_delay_s": 1
+      },
+      "preconditions": [
+        "network.online_if_cloud_case",
+        "first_wake_success",
+        "second_wake_before_timeout"
+      ],
+      "actions": [
+        "network.ensure_online",
+        "audio.play_wake_then_rewake"
+      ],
+      "evidence": [
+        "?? CP/AP wake",
+        "AP restart session timer",
+        "? second wake ? session timeout"
+      ],
+      "assertions": [
+        {
+          "metric": "first_wake_success",
+          "operator": "==",
+          "expected": true,
+          "owner": "precondition"
+        },
+        {
+          "metric": "cp_wake_count",
+          "operator": ">=",
+          "expected": 2,
+          "owner": "firmware-or-device"
+        },
+        {
+          "metric": "ap_wake_count",
+          "operator": ">=",
+          "expected": 2,
+          "owner": "firmware-or-device"
+        },
+        {
+          "metric": "timeout_before_second_wake",
+          "operator": "==",
+          "expected": false,
+          "owner": "test-design"
+        }
+      ],
+      "failure_split": [
+        "??????? -> ?????????????",
+        "??????????? -> ????/????",
+        "????????????? -> ???????????"
+      ]
+    },
+    "duplex.half": {
+      "title": "?????",
+      "support_status": "automated",
+      "intent": "????????????????????????????????????????????",
+      "parameters": {
+        "timeout_s": 15,
+        "command_text": "????"
+      },
+      "preconditions": [
+        "network.online",
+        "cloud.duplex_half_applied",
+        "serial.ready",
+        "audio.ready"
+      ],
+      "actions": [
+        "network.ensure_online",
+        "cloud.set_duplex_half",
+        "audio.play_wake_then_command"
+      ],
+      "evidence": [
+        "cloud apply success",
+        "CP/AP wake",
+        "online_asr or cp_command_keyword",
+        "cloud.instructions.audioBroadcast",
+        "TTS play/stop"
+      ],
+      "assertions": [
+        {
+          "metric": "cloud_apply_success",
+          "operator": "==",
+          "expected": true,
+          "owner": "cloud-or-config"
+        },
+        {
+          "metric": "cp_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "precondition"
+        },
+        {
+          "metric": "ap_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "precondition"
+        },
+        {
+          "metric": "command_asr_or_keyword",
+          "operator": "observed",
+          "expected": true,
+          "owner": "firmware-or-device"
+        },
+        {
+          "metric": "forbidden_recognition_during_playback",
+          "operator": "==",
+          "expected": false,
+          "owner": "requirement"
+        }
+      ],
+      "failure_split": [
+        "??/?????? -> BLOCKED",
+        "??? -> ?????????",
+        "???????? ASR/??? -> ??/ASR/????",
+        "??????? -> ????"
+      ]
+    },
+    "duplex.full": {
+      "title": "?????",
+      "support_status": "automated",
+      "intent": "??????????????????????/??/????????????",
+      "parameters": {
+        "timeout_s": 60,
+        "command_text": "????"
+      },
+      "preconditions": [
+        "network.online",
+        "cloud.duplex_full_applied",
+        "serial.ready",
+        "audio.ready"
+      ],
+      "actions": [
+        "network.ensure_online",
+        "cloud.set_duplex_full",
+        "audio.play_wake_then_command"
+      ],
+      "evidence": [
+        "fullduplex timeout refresh",
+        "restart session timer",
+        "online_asr/cp_keyword",
+        "cloud.instructions.audioBroadcast",
+        "TTS play/stop"
+      ],
+      "assertions": [
+        {
+          "metric": "cloud_apply_success",
+          "operator": "==",
+          "expected": true,
+          "owner": "cloud-or-config"
+        },
+        {
+          "metric": "cp_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "precondition"
+        },
+        {
+          "metric": "ap_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "precondition"
+        },
+        {
+          "metric": "command_asr_or_keyword",
+          "operator": "observed",
+          "expected": true,
+          "owner": "firmware-or-device"
+        },
+        {
+          "metric": "successful_response_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "cloud-or-firmware"
+        }
+      ],
+      "failure_split": [
+        "??/?????? -> BLOCKED",
+        "??????????? -> ??/ASR/????",
+        "audioBroadcast/TTS ????????? -> ????????",
+        "??????? -> ????"
+      ]
+    },
+    "command.basic_recognition": {
+      "title": "???????",
+      "support_status": "automated",
+      "intent": "????????????????????ASR/???????????",
+      "parameters": {
+        "command_file": "doc/fa2???.txt",
+        "wake_word": "????",
+        "limit": 20
+      },
+      "preconditions": [
+        "serial.ready",
+        "audio.ready",
+        "command_file.readable"
+      ],
+      "actions": [
+        "audio.play_wake_then_each_command"
+      ],
+      "evidence": [
+        "per_command/*.json",
+        "fa2_command_batch_summary.json",
+        "CP/AP wake",
+        "ASR/keyword",
+        "tone/TTS"
+      ],
+      "assertions": [
+        {
+          "metric": "playback_returncode",
+          "operator": "==",
+          "expected": 0,
+          "owner": "audio/playback"
+        },
+        {
+          "metric": "per_command.cp_wake_count",
+          "operator": ">=",
+          "expected": 1,
+          "owner": "precondition"
+        },
+        {
+          "metric": "per_command.asr_or_keyword",
+          "operator": "observed",
+          "expected": true,
+          "owner": "firmware-or-device"
+        }
+      ],
+      "failure_split": [
+        "???????? -> ??????",
+        "???? -> ????/??",
+        "???? -> ????/????",
+        "???????? ASR/??? -> ??/ASR",
+        "?????????? -> ??/??/????"
+      ]
+    },
+    "session.timeout_boundary": {
+      "title": "??/??????",
+      "support_status": "contract_ready",
+      "intent": "?? timeout=T ??T ????????T ???????????????",
+      "parameters": {
+        "timeout_s": 15,
+        "before_delta_s": 1,
+        "after_delta_s": 1
+      },
+      "preconditions": [
+        "wake_success",
+        "timeout_config_applied"
+      ],
+      "actions": [
+        "audio.play_before_timeout",
+        "audio.play_after_timeout"
+      ],
+      "evidence": [
+        "restart session timer with ${timeout_s}s",
+        "session timeout",
+        "stop interactive by session timeout"
+      ],
+      "assertions": [
+        {
+          "metric": "before_timeout_command_allowed",
+          "operator": "==",
+          "expected": true,
+          "owner": "requirement"
+        },
+        {
+          "metric": "after_timeout_requires_rewake",
+          "operator": "==",
+          "expected": true,
+          "owner": "requirement"
+        }
+      ],
+      "failure_split": [
+        "????? timeout -> ?????/????",
+        "????? timeout ??? -> ????"
+      ]
+    },
+    "wakeup.word_change": {
+      "title": "?????",
+      "support_status": "contract_ready",
+      "intent": "????????????????????????????",
+      "parameters": {
+        "new_wake_word": "",
+        "expected_wakeup_id": "",
+        "old_wake_word_policy": "forbidden_or_compatible"
+      },
+      "preconditions": [
+        "network.online",
+        "cloud.wakeup_word_supported"
+      ],
+      "actions": [
+        "cloud.set_wakeup_word",
+        "audio.play_new_wake_word",
+        "audio.play_old_wake_word"
+      ],
+      "evidence": [
+        "cloud wakeup config ack",
+        "deviceinfo WakeupID",
+        "AP wakeup_callback keyword",
+        "CP WAKE key"
+      ],
+      "assertions": [
+        {
+          "metric": "new_wake_word_wakes",
+          "operator": "==",
+          "expected": true,
+          "owner": "firmware-or-model"
+        },
+        {
+          "metric": "wakeup_id",
+          "operator": "==",
+          "expected": "${expected_wakeup_id}",
+          "owner": "cloud-or-firmware"
+        }
+      ],
+      "failure_split": [
+        "???? -> ??/??/??",
+        "?????????? -> ??/??/??",
+        "?????? -> ????"
+      ]
+    }
+  }
+}

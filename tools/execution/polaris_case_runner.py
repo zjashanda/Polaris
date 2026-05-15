@@ -137,7 +137,7 @@ def summarize_window(window_logs: Dict[str, List[str]]) -> dict:
     for port, lines in window_logs.items():
         for line in lines:
             lower = line.lower()
-            if "wake(" in lower or "wakeup_callback" in lower or "offline_wakeup" in lower:
+            if "wake(" in lower or "wakeup_callback" in lower or "offline_wakeup" in lower or "offline wakeup" in lower or "line_wakeup" in lower:
                 summary["wakeup_lines"].append(line)
             if "offline_asr_callbak" in lower:
                 summary["offline_asr_lines"].append(line)

@@ -15,3 +15,12 @@ __pycache__/
 *.pcm
 *.wav
 *.mp3
+
+# keep runtime-heavy satellite outputs ignored, but publish the reusable Cucumber framework
+!satellite/
+satellite/*
+!satellite/cucumber-agent-testing/
+!satellite/cucumber-agent-testing/**
+satellite/cucumber-agent-testing/debug/
+satellite/cucumber-agent-testing/**/__pycache__/
+satellite/cucumber-agent-testing/**/*.pyc
