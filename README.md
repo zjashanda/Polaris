@@ -1,4 +1,35 @@
-# polaris-device-validation
+﻿# Polaris
+
+## Cucumber Agent Testing 快速入口
+
+Polaris 当前新增了一套可开源上手的 BDD + Agent Testing 入口，位置在：
+
+```text
+satellite/cucumber-agent-testing/
+```
+
+首次 clone 后，先复制本机配置模板，再 dry-run 验证任务入口：
+
+```powershell
+Copy-Item satellite\cucumber-agent-testing\configs\polaris_env.example.json config\polaris_env.json
+notepad config\polaris_env.json
+python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json
+```
+
+真机执行时再显式允许副作用：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode execute --allow-side-effects --manage-session
+```
+
+详细说明见：
+
+- `satellite/cucumber-agent-testing/README.md`
+- `satellite/cucumber-agent-testing/docs/configuration.md`
+- `satellite/cucumber-agent-testing/configs/polaris_env.example.json`
+- `satellite/cucumber-agent-testing/tasks/examples/`
+
+## 原有 skill 说明
 
 用于在本仓库中验证 Polaris 系列美的空调语音设备，覆盖串口日志、COM15 电源控制、热点编排、短语探测、已验证正常的云端控制、文档用例执行与报告同步。
 

@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""从任务配置文件触发 Polaris Cucumber 测试。
+
+任务文件是给新使用者的稳定入口：他们只需要复制 env 模板、选择一个
+task JSON，再执行本脚本即可。脚本本身不访问网络、不调用大模型。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+BDD_ROOT = SCRIPT_DIR.parents[0]
+WORKSPACE_ROOT = SCRIPT_DIR.parents[2]
+RUN_CUCUMBER = SCRIPT_DIR / "run_cucumber.py"
+COMPILE_FEATURE = SCRIPT_DIR / "compile_feature.py"
+
+
+def load_json(path: Path) -> Dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def first_non_empty(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def nested(payload: Dict[str, Any], *keys: str) -> Any:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return ""
+        current = current.get(key, "")
+    return current
+
+
+def resolve_workspace_path(value: str) -> str:
+    if not value:
+        return ""
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str((WORKSPACE_ROOT / value).resolve())
+
+
+def quote_cmd(args: List[str]) -> str:
+    result: List[str] = []
+    for arg in args:
+        if not arg:
+            result.append('""')
+        elif any(ch.isspace() for ch in arg) or any(ch in arg for ch in ['"', "'", "&"]):
+            result.append('"' + arg.replace('"', '\\"') + '"')
+        else:
+            result.append(arg)
+    return " ".join(result)
+
+
+def add_optional(cmd: List[str], option: str, value: Any, *, path_value: bool = False) -> None:
+    text = first_non_empty(value)
+    if not text:
+        return
+    cmd.extend([option, resolve_workspace_path(text) if path_value else text])
+
+
+def resolve_bool(cli_value: Optional[bool], *values: Any) -> bool:
+    if cli_value is not None:
+        return bool(cli_value)
+    for value in values:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes", "y"}:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"false", "0", "no", "n"}:
+            return False
+    return False
+
+
+def build_common_args(args: argparse.Namespace, task: Dict[str, Any], env_payload: Dict[str, Any]) -> Dict[str, str]:
+    runner = task.get("runner", {})
+    scenario = task.get("scenario", {})
+    environment = task.get("environment", {})
+    inputs = task.get("inputs", {})
+    execution = task.get("execution", {})
+    network = environment.get("network", {})
+
+    env_file = first_non_empty(args.env_file, environment.get("env_file"), runner.get("env_file"), "config/polaris_env.json")
+    tag = first_non_empty(args.tag, scenario.get("tag"), task.get("scenario_tag"))
+    mode = first_non_empty(args.mode, runner.get("mode"), task.get("mode"), "plan-only")
+
+    return {
+        "env_file": env_file,
+        "tag": tag,
+        "mode": mode,
+        "feature": first_non_empty(args.feature, runner.get("feature"), "satellite/cucumber-agent-testing/features/polaris_voice_core.feature"),
+        "mapping": first_non_empty(args.mapping, runner.get("mapping"), "satellite/cucumber-agent-testing/references/voice_core_mapping.json"),
+        "debug_root": first_non_empty(runner.get("debug_root"), nested(env_payload, "paths", "debug_root"), "satellite/cucumber-agent-testing/debug"),
+        "wake_word": first_non_empty(
+            args.wake_word,
+            environment.get("wake_word"),
+            nested(environment, "device", "wake_word"),
+            env_payload.get("current_wakeup_word", ""),
+            nested(env_payload, "device", "wake_word"),
+        ),
+        "device_key": first_non_empty(
+            args.device_key,
+            environment.get("device_key"),
+            nested(environment, "audio", "default_playback_device_key"),
+            env_payload.get("default_playback_device_key", ""),
+            nested(env_payload, "audio", "default_playback_device_key"),
+        ),
+        "command_text": first_non_empty(args.command_text, inputs.get("command_text")),
+        "command_file": first_non_empty(args.command_file, inputs.get("command_file"), nested(env_payload, "paths", "command_file")),
+        "command_limit": first_non_empty(args.command_limit, inputs.get("command_limit"), nested(env_payload, "limits", "command_limit")),
+        "observe_ms": first_non_empty(args.observe_ms, execution.get("observe_ms"), nested(env_payload, "timeouts", "observe_ms")),
+        "wifi_ssid": first_non_empty(
+            args.wifi_ssid,
+            environment.get("wifi_ssid"),
+            network.get("wifi_ssid"),
+            env_payload.get("current_connected_ssid", ""),
+            nested(env_payload, "network", "wifi_ssid"),
+        ),
+        "wifi_password": first_non_empty(
+            args.wifi_password,
+            environment.get("wifi_password"),
+            network.get("wifi_password"),
+            env_payload.get("wifi_password", ""),
+            nested(env_payload, "network", "wifi_password"),
+        ),
+        "recognition_timeout_s": first_non_empty(execution.get("recognition_timeout_s"), nested(env_payload, "timeouts", "recognition_timeout_s")),
+        "half_duplex_timeout_s": first_non_empty(execution.get("half_duplex_timeout_s"), nested(env_payload, "timeouts", "half_duplex_timeout_s")),
+        "full_duplex_timeout_s": first_non_empty(execution.get("full_duplex_timeout_s"), nested(env_payload, "timeouts", "full_duplex_timeout_s")),
+    }
+
+
+def build_compile_command(common: Dict[str, str], strict: bool) -> List[str]:
+    cmd = [
+        sys.executable,
+        str(COMPILE_FEATURE),
+        "--feature",
+        resolve_workspace_path(common["feature"]),
+        "--mapping",
+        resolve_workspace_path(common["mapping"]),
+        "--env-file",
+        resolve_workspace_path(common["env_file"]),
+        "--debug-root",
+        resolve_workspace_path(common["debug_root"]),
+    ]
+    add_optional(cmd, "--tag", common["tag"])
+    add_optional(cmd, "--wake-word", common["wake_word"])
+    add_optional(cmd, "--command-text", common["command_text"])
+    add_optional(cmd, "--command-file", common["command_file"])
+    add_optional(cmd, "--command-limit", common["command_limit"])
+    add_optional(cmd, "--device-key", common["device_key"])
+    add_optional(cmd, "--observe-ms", common["observe_ms"])
+    add_optional(cmd, "--wifi-ssid", common["wifi_ssid"])
+    add_optional(cmd, "--wifi-password", common["wifi_password"])
+    add_optional(cmd, "--recognition-timeout-s", common["recognition_timeout_s"])
+    add_optional(cmd, "--half-duplex-timeout-s", common["half_duplex_timeout_s"])
+    add_optional(cmd, "--full-duplex-timeout-s", common["full_duplex_timeout_s"])
+    if strict:
+        cmd.append("--strict")
+    return cmd
+
+
+def build_run_command(
+    common: Dict[str, str],
+    compiled_plan: str,
+    allow_side_effects: bool,
+    manage_session: bool,
+) -> List[str]:
+    cmd = [
+        sys.executable,
+        str(RUN_CUCUMBER),
+        "--mode",
+        common["mode"],
+        "--env-file",
+        resolve_workspace_path(common["env_file"]),
+        "--debug-root",
+        resolve_workspace_path(common["debug_root"]),
+    ]
+    if compiled_plan:
+        cmd.extend(["--compiled-plan", compiled_plan])
+    else:
+        cmd.extend(["--feature", resolve_workspace_path(common["feature"]), "--mapping", resolve_workspace_path(common["mapping"])])
+    add_optional(cmd, "--tag", common["tag"])
+    add_optional(cmd, "--wake-word", common["wake_word"])
+    add_optional(cmd, "--command-text", common["command_text"])
+    add_optional(cmd, "--command-file", common["command_file"])
+    add_optional(cmd, "--command-limit", common["command_limit"])
+    add_optional(cmd, "--device-key", common["device_key"])
+    add_optional(cmd, "--observe-ms", common["observe_ms"])
+    add_optional(cmd, "--wifi-ssid", common["wifi_ssid"])
+    add_optional(cmd, "--wifi-password", common["wifi_password"])
+    if allow_side_effects:
+        cmd.append("--allow-side-effects")
+    if manage_session:
+        cmd.append("--manage-session")
+    return cmd
+
+
+def run_and_echo(cmd: List[str], *, capture_plan_path: bool = False) -> str:
+    print("$ " + quote_cmd(cmd), flush=True)
+    completed = subprocess.run(
+        cmd,
+        cwd=str(WORKSPACE_ROOT),
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE if capture_plan_path else None,
+        stderr=subprocess.STDOUT if capture_plan_path else None,
+    )
+    if capture_plan_path:
+        output = completed.stdout or ""
+        if output:
+            print(output, end="" if output.endswith("\n") else "\n")
+        if completed.returncode != 0:
+            raise SystemExit(completed.returncode)
+        for line in reversed([item.strip() for item in output.splitlines() if item.strip()]):
+            if line.endswith(".json") or Path(line).exists():
+                return line
+        raise SystemExit("compile_feature 未输出 compiled_plan 路径。")
+    if completed.returncode != 0:
+        raise SystemExit(completed.returncode)
+    return ""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run Polaris Cucumber by a task JSON file.")
+    parser.add_argument("--task", required=True, help="任务配置 JSON，例如 tasks/examples/first_wake.example.json")
+    parser.add_argument("--mode", choices=["plan-only", "dry-run", "execute"], default="")
+    parser.add_argument("--tag", default="")
+    parser.add_argument("--env-file", default="")
+    parser.add_argument("--feature", default="")
+    parser.add_argument("--mapping", default="")
+    parser.add_argument("--wake-word", default="")
+    parser.add_argument("--command-text", default="")
+    parser.add_argument("--command-file", default="")
+    parser.add_argument("--command-limit", default="")
+    parser.add_argument("--device-key", default="")
+    parser.add_argument("--observe-ms", default="")
+    parser.add_argument("--wifi-ssid", default="")
+    parser.add_argument("--wifi-password", default="")
+    parser.add_argument("--compile-first", action="store_true", help="先用 step/action/assertion registry 离线编译，再执行 compiled plan")
+    parser.add_argument("--no-compile-first", dest="compile_first", action="store_false")
+    parser.set_defaults(compile_first=None)
+    parser.add_argument("--strict", action="store_true", help="compile-first 时启用严格编译")
+    parser.add_argument("--allow-side-effects", dest="allow_side_effects", action="store_true", default=None)
+    parser.add_argument("--no-allow-side-effects", dest="allow_side_effects", action="store_false")
+    parser.add_argument("--manage-session", dest="manage_session", action="store_true", default=None)
+    parser.add_argument("--no-manage-session", dest="manage_session", action="store_false")
+    parser.add_argument("--print-command", action="store_true", help="只打印最终命令，不执行")
+    args = parser.parse_args()
+
+    task_path = Path(args.task)
+    if not task_path.is_absolute():
+        task_path = WORKSPACE_ROOT / task_path
+    task = load_json(task_path.resolve())
+    runner = task.get("runner", {})
+    execution = task.get("execution", {})
+    policy = task.get("policy", {})
+
+    env_file = first_non_empty(args.env_file, task.get("environment", {}).get("env_file"), runner.get("env_file"), "config/polaris_env.json")
+    env_path = Path(resolve_workspace_path(env_file))
+    env_payload = load_json(env_path) if env_path.exists() else {}
+    common = build_common_args(args, task, env_payload)
+
+    if not common["tag"] and not runner.get("allow_all_scenarios", False):
+        raise SystemExit("任务文件没有指定 scenario.tag；如需跑全量，请在 runner.allow_all_scenarios=true 后再执行。")
+
+    allow_side_effects = resolve_bool(args.allow_side_effects, execution.get("allow_side_effects"), policy.get("allow_side_effects"))
+    manage_session = resolve_bool(args.manage_session, execution.get("manage_session"), policy.get("manage_session"))
+    compile_first = resolve_bool(args.compile_first, runner.get("compile_first"))
+
+    compiled_plan = ""
+    if compile_first:
+        compile_cmd = build_compile_command(common, strict=bool(args.strict or runner.get("strict_compile", False)))
+        if args.print_command:
+            print("$ " + quote_cmd(compile_cmd))
+        else:
+            compiled_plan = run_and_echo(compile_cmd, capture_plan_path=True)
+
+    run_cmd = build_run_command(common, compiled_plan, allow_side_effects, manage_session)
+    if args.print_command:
+        print("$ " + quote_cmd(run_cmd))
+        return 0
+    run_and_echo(run_cmd)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

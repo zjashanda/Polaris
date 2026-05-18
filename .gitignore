@@ -1,11 +1,16 @@
-# runtime evidence and local state
+﻿# runtime evidence and local state
 result/
 cache/
 fw/
 outputs/
-satellite/
 plan.md
 .current_*
+.case_runner.lock
+
+# local machine configuration
+config/polaris_env.json
+config/polaris_local_ports.json
+*.local.json
 
 # Python/cache artifacts
 __pycache__/
@@ -21,6 +26,7 @@ __pycache__/
 satellite/*
 !satellite/cucumber-agent-testing/
 !satellite/cucumber-agent-testing/**
-satellite/cucumber-agent-testing/debug/
+satellite/cucumber-agent-testing/debug/*
+!satellite/cucumber-agent-testing/debug/.gitkeep
 satellite/cucumber-agent-testing/**/__pycache__/
 satellite/cucumber-agent-testing/**/*.pyc

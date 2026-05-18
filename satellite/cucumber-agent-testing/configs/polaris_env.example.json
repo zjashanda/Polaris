@@ -1,0 +1,50 @@
+{
+  "schema": "polaris.env.v1",
+  "serial": {
+    "baudrate": 115200,
+    "ports": {
+      "ap": "COM14",
+      "cp": "COM12",
+      "asr": "COM13",
+      "control": "COM15"
+    },
+    "roles": {
+      "ap": "cskap/AP 日志和部分控制",
+      "cp": "cskcp/CP 日志",
+      "asr": "ASR/WB01 日志",
+      "control": "上下电或复位控制串口"
+    }
+  },
+  "audio": {
+    "default_playback_device_key": "VID_8765&PID_5678:9_2A847557_7_0000",
+    "playback_volume": 80
+  },
+  "device": {
+    "wake_word": "小美小美",
+    "wakeup_id": "xiao mei xiao mei",
+    "model": "",
+    "iot_id": "",
+    "mac": ""
+  },
+  "network": {
+    "wifi_ssid": "pcwifi24",
+    "wifi_password": "12345678",
+    "enable_hotspot_control": false
+  },
+  "timeouts": {
+    "observe_ms": 15000,
+    "recognition_timeout_s": 15,
+    "half_duplex_timeout_s": 15,
+    "full_duplex_timeout_s": 60,
+    "timing_guard_ms": 1200
+  },
+  "limits": {
+    "command_limit": 20,
+    "stress_rounds": 100
+  },
+  "paths": {
+    "command_file": "doc/fa2命令词.txt",
+    "debug_root": "satellite/cucumber-agent-testing/debug",
+    "result_root": "result"
+  }
+}

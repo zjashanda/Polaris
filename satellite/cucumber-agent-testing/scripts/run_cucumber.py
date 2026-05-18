@@ -94,6 +94,25 @@ def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def first_non_empty(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def nested(payload: Dict[str, Any], *keys: str) -> Any:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return ""
+        current = current.get(key, "")
+    return current
+
+
 def marker_path(name: str) -> Path:
     return WORKSPACE_ROOT / name
 
@@ -189,28 +208,66 @@ def quote_cmd(args: List[str]) -> str:
 
 def resolve_context(args: argparse.Namespace, mapping: Dict[str, Any], run_dir: Path) -> Dict[str, str]:
     defaults = mapping.get("defaults", {})
-    device_key = args.device_key if args.device_key is not None else str(defaults.get("device_key", ""))
     env_payload: Dict[str, Any] = {}
-    env_path = WORKSPACE_ROOT / "config" / "polaris_env.json"
+    env_path = Path(args.env_file).resolve() if getattr(args, "env_file", "") else WORKSPACE_ROOT / "config" / "polaris_env.json"
     if env_path.exists():
         try:
             env_payload = load_json(env_path)
         except Exception:
             env_payload = {}
-    if not device_key:
-        device_key = str(env_payload.get("default_playback_device_key", ""))
+    device_key = first_non_empty(
+        args.device_key,
+        defaults.get("device_key", ""),
+        env_payload.get("default_playback_device_key", ""),
+        nested(env_payload, "audio", "default_playback_device_key"),
+    )
+    wake_word = first_non_empty(
+        args.wake_word,
+        defaults.get("wake_word", ""),
+        env_payload.get("current_wakeup_word", ""),
+        nested(env_payload, "device", "wake_word"),
+        "小美小美",
+    )
+    command_file = first_non_empty(
+        args.command_file,
+        defaults.get("command_file", ""),
+        nested(env_payload, "paths", "command_file"),
+        "doc/fa2命令词.txt",
+    )
+    observe_ms = first_non_empty(args.observe_ms, defaults.get("observe_ms", ""), nested(env_payload, "timeouts", "observe_ms"), "15000")
+    command_limit = first_non_empty(args.command_limit, defaults.get("command_limit", ""), nested(env_payload, "limits", "command_limit"), "20")
+    wifi_ssid = first_non_empty(
+        getattr(args, "wifi_ssid", ""),
+        defaults.get("wifi_ssid", ""),
+        env_payload.get("current_connected_ssid", ""),
+        nested(env_payload, "network", "wifi_ssid"),
+        "pcwifi24",
+    )
+    wifi_password = first_non_empty(
+        getattr(args, "wifi_password", ""),
+        defaults.get("wifi_password", ""),
+        env_payload.get("wifi_password", ""),
+        nested(env_payload, "network", "wifi_password"),
+        "12345678",
+    )
     return {
         "python": sys.executable,
         "root": str(WORKSPACE_ROOT),
         "debug_dir": str(run_dir),
-        "wake_word": args.wake_word or str(defaults.get("wake_word", "小美小美")),
+        "env_file": str(env_path),
+        "wake_word": wake_word,
         "command_text": args.command_text or str(defaults.get("command_text", "打开空调")),
-        "command_file": args.command_file or str(defaults.get("command_file", "doc/fa2命令词.txt")),
+        "command_file": command_file,
         "device_key": device_key,
-        "wifi_ssid": str(defaults.get("wifi_ssid", "") or env_payload.get("current_connected_ssid", "") or "pcwifi24"),
-        "wifi_password": str(defaults.get("wifi_password", "12345678")),
-        "observe_ms": str(args.observe_ms or defaults.get("observe_ms", "15000")),
-        "command_limit": str(args.command_limit or defaults.get("command_limit", "20")),
+        "wifi_ssid": wifi_ssid,
+        "wifi_password": wifi_password,
+        "observe_ms": observe_ms,
+        "command_limit": command_limit,
+        "ap_port": first_non_empty(nested(env_payload, "serial", "ports", "ap"), nested(env_payload, "ports", "ap")),
+        "cp_port": first_non_empty(nested(env_payload, "serial", "ports", "cp"), nested(env_payload, "ports", "cp")),
+        "asr_port": first_non_empty(nested(env_payload, "serial", "ports", "asr"), nested(env_payload, "ports", "asr")),
+        "control_port": first_non_empty(nested(env_payload, "serial", "ports", "control"), nested(env_payload, "ports", "control")),
+        "baudrate": first_non_empty(nested(env_payload, "serial", "baudrate"), env_payload.get("baudrate", ""), "115200"),
     }
 
 
@@ -1120,6 +1177,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run Polaris Cucumber Agent Testing in plan-only/dry-run/execute mode.")
     parser.add_argument("--feature", default=str(DEFAULT_FEATURE))
     parser.add_argument("--mapping", default=str(DEFAULT_MAPPING))
+    parser.add_argument("--env-file", default="", help="本地环境配置 JSON，默认读取 config/polaris_env.json")
     parser.add_argument("--debug-root", default=str(DEFAULT_DEBUG_ROOT))
     parser.add_argument("--mode", choices=["plan-only", "dry-run", "execute"], default="plan-only")
     parser.add_argument("--tag", default="", help="按 @tag 或 scenario_id 过滤")
@@ -1129,6 +1187,8 @@ def main() -> int:
     parser.add_argument("--command-limit", default="")
     parser.add_argument("--device-key", default=None)
     parser.add_argument("--observe-ms", default="")
+    parser.add_argument("--wifi-ssid", default="")
+    parser.add_argument("--wifi-password", default="")
     parser.add_argument("--allow-side-effects", action="store_true", help="execute 模式确认允许占用串口/播放/云端")
     parser.add_argument("--manage-session", action="store_true", help="execute 模式下创建 BDD 专用 session 并自动启动/停止串口 logger")
     parser.add_argument("--summarize-run", default="", help="仅解析已有 run_dir 并生成 bdd_run_summary/report，不新建执行")
