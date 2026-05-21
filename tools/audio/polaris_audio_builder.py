@@ -12,7 +12,6 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
 import subprocess
 import time
 import wave
@@ -24,24 +23,14 @@ import yaml
 
 
 BASE_URL = "ws://wsapi.xfyun.cn/v1/aiui"
-APP_ID = os.environ.get("POLARIS_XFYUN_APP_ID", "")
-API_KEY = os.environ.get("POLARIS_XFYUN_API_KEY", "")
-AUTH_ID = os.environ.get("POLARIS_XFYUN_AUTH_ID", "")
+APP_ID = "5af3aa4f"
+API_KEY = "fe85d97976354eeeaf3d0122fb44ba2b"
+AUTH_ID = "894c985bf8b1111c6728db79d3479aeg"
 VCN = "x4_yezi"
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2
 SAPI_VOICE_NAME = "Huihui"
-
-
-def require_xfyun_credentials() -> None:
-    missing = [name for name, value in {
-        "POLARIS_XFYUN_APP_ID": APP_ID,
-        "POLARIS_XFYUN_API_KEY": API_KEY,
-        "POLARIS_XFYUN_AUTH_ID": AUTH_ID,
-    }.items() if not value]
-    if missing:
-        raise RuntimeError("Missing XFYun TTS credentials: " + ", ".join(missing))
 
 
 def workspace_root() -> Path:
@@ -55,7 +44,6 @@ def cache_dir() -> Path:
 
 
 def build_conn_param() -> str:
-    require_xfyun_credentials()
     cur_time = str(int(time.time()))
     param = {
         "auth_id": AUTH_ID,

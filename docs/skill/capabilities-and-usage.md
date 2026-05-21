@@ -1,4 +1,4 @@
-# Polaris 能力与用法
+﻿# Polaris 能力与用法
 
 本文档统一使用 UTF-8 编码，只记录当前已经验证为“正常可控”或“可稳定执行”的入口。
 
@@ -60,7 +60,7 @@ python tools/device/polaris_serial_harness.py send --session-dir $session --port
 python tools/probe/polaris_state_probe.py snapshot --label smoke
 ```
 
-串口默认从 `config/polaris_local_ports.json` 读取；显式传入 `--port` 时会同步回本地配置。也可以先查看或手动同步配置：
+串口默认优先从根目录 `polaris.local.json` 的当前 `active_project` 读取；显式传入 `--port` 时会同步到根配置和旧版 `config/polaris_local_ports.json` 缓存。也可以先查看或手动同步配置：
 
 ```powershell
 python tools/core/polaris_config.py show
@@ -75,16 +75,25 @@ python tools/device/polaris_serial_harness.py send --session-dir $session --role
 python tools/device/polaris_serial_harness.py send --session-dir $session --role asr --command "listen version"
 ```
 
-旧工具里仍写死的 `COM12/COM13/COM14` 会在 `tools/core/polaris_runtime.py` 中按 `cp/asr/ap` 角色映射到本地配置里的实际端口。
+旧工具里仍写死的 `COM12/COM13/COM14` 会在 `tools/core/polaris_runtime.py` 中按 `cp/asr/ap` 角色映射到本地配置里的实际端口；无 CP 项目会跳过空 `cp` 端口。
 
 ### 2.3 短语探测
 
-默认播放设备来自 `config/polaris_env.json -> default_playback_device_key`。
+默认播放设备来自 `polaris.local.json -> common.audio.default_playback_device_key` 或项目自己的 `audio.default_playback_device_key`，旧版 `config/polaris_env.json` 只作为兜底。该字段留空或不存在时，脚本会省略 `--device-key`，由 `listenai-play` 使用电脑默认播放声卡。
 
 ```powershell
 python tools/probe/polaris_phrase_probe.py --text 小美小美 --observe-ms 15000 --label wake_smoke
 python tools/probe/polaris_phrase_probe.py --text 小美小美 --text 打开空调 --observe-ms 15000 --label wake_cmd_smoke
 ```
+
+如果播放返回码为 `0`，但 CP/AP/ASR 都没有唤醒证据，先按声卡/PA 链路问题处理。WB01/WS63 类项目可在控制口执行：
+
+```text
+uut-pa.on
+pa-enable.set 0 17 0 1
+```
+
+执行后复播唤醒词；若唤醒恢复，归因为 PA/声卡链路前置缺失，不直接判固件失败。
 
 ### 2.4 电源与网络
 
@@ -96,7 +105,7 @@ python tools/device/polaris_network_orchestrator.py hotspot-cycle
 python tools/device/polaris_network_orchestrator.py vir-reboot --ssid pcwifi24 --pwd 12345678
 ```
 
-`polaris_power_control.py` 未指定 `--port` 时读取配置里的 `control` 串口；指定 `--port COMxx` 时会同步 `control=COMxx` 到 `config/polaris_local_ports.json`。
+`polaris_power_control.py` 未指定 `--port` 时读取配置里的 `control` 串口；指定 `--port COMxx` 时会同步 `control=COMxx` 到 `polaris.local.json` 和旧版串口缓存。
 
 ### 2.5 云端控制
 
@@ -203,7 +212,7 @@ python tools/reporting/export_auto_case_detail_md.py
 
 ```powershell
 python tools/pool/polaris_validation_pool.py validate
-python tools/pool/polaris_validation_pool.py classify --project-key polaris_midea_ac --out outputs\polaris_pool_match.md SKILL.md capabilities-and-usage.md environment-and-migration.md references
+python tools/pool/polaris_validation_pool.py classify --project-key polaris_midea_ac --out outputs\polaris_pool_match.md SKILL.md docs/skill/capabilities-and-usage.md docs/skill/environment-and-migration.md references
 python tools/suite/run_polaris_formal_suite.py --tag plan_only
 ```
 
@@ -216,3 +225,4 @@ python tools/suite/run_polaris_formal_suite.py --tag plan_only
 5. `references/project-profiles/polaris_midea_ac.json`
 
 默认原则：raw FAIL 先收敛验证路径；只有前置满足、采集有效、需求明确且行为矛盾时，才保留最终固件 FAIL。
+

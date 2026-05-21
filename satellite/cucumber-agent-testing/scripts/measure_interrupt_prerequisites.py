@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Measure self-play windows for interruption prerequisites.
 
 This script is intentionally independent from LLM generation: it can either
@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 BASE = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 
 if str(WORKSPACE_ROOT) not in sys.path:
@@ -867,3 +867,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

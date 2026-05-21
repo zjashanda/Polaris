@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from polaris_env import default_env_path, load_env_payload, resolve_env_path
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BDD_ROOT = SCRIPT_DIR.parents[0]
@@ -24,7 +26,7 @@ COMPILE_FEATURE = SCRIPT_DIR / "compile_feature.py"
 
 
 def load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def first_non_empty(*values: Any) -> str:
@@ -87,7 +89,12 @@ def resolve_bool(cli_value: Optional[bool], *values: Any) -> bool:
     return False
 
 
-def build_common_args(args: argparse.Namespace, task: Dict[str, Any], env_payload: Dict[str, Any]) -> Dict[str, str]:
+def build_common_args(
+    args: argparse.Namespace,
+    task: Dict[str, Any],
+    env_payload: Dict[str, Any],
+    default_env_file: str,
+) -> Dict[str, str]:
     runner = task.get("runner", {})
     scenario = task.get("scenario", {})
     environment = task.get("environment", {})
@@ -95,7 +102,7 @@ def build_common_args(args: argparse.Namespace, task: Dict[str, Any], env_payloa
     execution = task.get("execution", {})
     network = environment.get("network", {})
 
-    env_file = first_non_empty(args.env_file, environment.get("env_file"), runner.get("env_file"), "config/polaris_env.json")
+    env_file = first_non_empty(args.env_file, environment.get("env_file"), runner.get("env_file"), default_env_file)
     tag = first_non_empty(args.tag, scenario.get("tag"), task.get("scenario_tag"))
     mode = first_non_empty(args.mode, runner.get("mode"), task.get("mode"), "plan-only")
 
@@ -271,10 +278,15 @@ def main() -> int:
     execution = task.get("execution", {})
     policy = task.get("policy", {})
 
-    env_file = first_non_empty(args.env_file, task.get("environment", {}).get("env_file"), runner.get("env_file"), "config/polaris_env.json")
-    env_path = Path(resolve_workspace_path(env_file))
-    env_payload = load_json(env_path) if env_path.exists() else {}
-    common = build_common_args(args, task, env_payload)
+    env_file = first_non_empty(
+        args.env_file,
+        task.get("environment", {}).get("env_file"),
+        runner.get("env_file"),
+        str(default_env_path(WORKSPACE_ROOT)),
+    )
+    env_path = resolve_env_path(env_file, WORKSPACE_ROOT)
+    env_payload = load_env_payload(env_path)
+    common = build_common_args(args, task, env_payload, str(env_path))
 
     if not common["tag"] and not runner.get("allow_all_scenarios", False):
         raise SystemExit("任务文件没有指定 scenario.tag；如需跑全量，请在 runner.allow_all_scenarios=true 后再执行。")

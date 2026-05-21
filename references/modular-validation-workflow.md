@@ -46,7 +46,7 @@
 ### 3. 模块匹配
 
 ```powershell
-python tools/pool/polaris_validation_pool.py classify --project-key polaris_midea_ac SKILL.md capabilities-and-usage.md environment-and-migration.md
+python tools/pool/polaris_validation_pool.py classify --project-key polaris_midea_ac SKILL.md docs/skill/capabilities-and-usage.md docs/skill/environment-and-migration.md
 ```
 
 命中多个互斥变体时，优先生成最小探测用例，而不是直接套旧结论。

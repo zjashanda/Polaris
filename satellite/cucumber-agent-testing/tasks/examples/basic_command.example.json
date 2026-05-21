@@ -12,7 +12,7 @@
     "mapping": "satellite/cucumber-agent-testing/references/voice_core_mapping.json"
   },
   "environment": {
-    "env_file": "config/polaris_env.json"
+    "env_file": "polaris.local.json"
   },
   "inputs": {
     "command_file": "doc/fa2命令词.txt",
@@ -33,3 +33,4 @@
     ]
   }
 }
+

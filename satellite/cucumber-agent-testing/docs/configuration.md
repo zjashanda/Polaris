@@ -6,21 +6,93 @@
 
 | 文件 | 是否提交 Git | 用途 |
 | --- | --- | --- |
-| `satellite/cucumber-agent-testing/configs/polaris_env.example.json` | 是 | 本地环境配置模板，给所有人复制。 |
-| `config/polaris_env.json` | 否 | 每台电脑自己的串口、声卡、网络、设备信息。 |
-| `satellite/cucumber-agent-testing/tasks/examples/*.json` | 是 | 某个功能的触发任务示例。 |
+| `polaris.local.example.json` | 是 | 根目录本机配置模板，新用户只需要复制它。 |
+| `polaris.local.json` | 否 | 每台电脑自己的真实配置，记录当前项目、串口、声卡、Wi-Fi、唤醒词、云环境。 |
+| `satellite/cucumber-agent-testing/tasks/examples/*.json` | 是 | 某个功能的触发任务示例，默认读取 `polaris.local.json`。 |
 | `satellite/cucumber-agent-testing/tasks/templates/new_feature.template.json` | 是 | 新功能接入前的沉淀模板。 |
 | `satellite/cucumber-agent-testing/references/voice_core_mapping.json` | 是 | 已沉淀功能的执行脚本、断言和归因规则。 |
 | `satellite/cucumber-agent-testing/features/polaris_voice_core.feature` | 是 | Cucumber 自然语言用例。 |
+| `config/polaris_env.json` | 否 | 旧版环境配置兜底；新用户不需要优先编辑。 |
+| `config/polaris_local_ports.json` | 否 | 旧版串口缓存；根配置存在时会从根配置同步。 |
 
-## 本地环境配置 `config/polaris_env.json`
+## 根目录本机配置 `polaris.local.json`
 
 首次使用：
 
 ```powershell
-Copy-Item satellite\cucumber-agent-testing\configs\polaris_env.example.json config\polaris_env.json
-notepad config\polaris_env.json
+Copy-Item polaris.local.example.json polaris.local.json
+notepad polaris.local.json
 ```
+
+配置文件只放基础环境，不放运行日志、不放报告、不放大段知识库：
+
+- `active_project`：当前要跑哪个项目，例如 `cskwb01` 或 `venusws63`。
+- `common`：多个项目共用的声卡、唤醒词、默认路径和超时时间。
+- `projects.cskwb01`：WB01/CSK 三端项目配置，AP + CP + WB01/ASR + 控制口。
+- `projects.venusws63`：WS63/AP+WiFi 项目配置，AP + 上位/WiFi + 控制口，无 CP。
+
+脚本读取时会先把 `common` 和 `projects.<active_project>` 合并成生效配置；所以任务和断言不用关心你当前用的是 WB01 还是 WS63，只看合并后的 `serial/audio/device/network/cloud` 字段。
+
+默认查找顺序：命令行 `--env-file` > 任务文件 `environment.env_file` > 根目录 `polaris.local.json` > 旧版 `config/polaris_env.json`。
+
+## config/ 目录说明
+
+`config/` 里文件很多，但不是都要手改：
+
+- `polaris_env.json`、`polaris_local_ports.json`：历史兼容/缓存。
+- `polaris_doc_case_status.json`、`polaris_auto_executable_case_detail.md`、`polaris_fail_case_detail.md`、`polaris_failure_diagnosis.json`：运行状态、结果或诊断输出。
+- `polaris_command_catalog.*`、`polaris_validation_reference.md`、`polaris_model_applicability.md`：参考资料/知识库。
+
+当前策略是不直接删除旧文件，避免破坏历史脚本；新人和日常调试只看根目录 `polaris.local.json`。
+
+## WB01 项目需要填写什么
+
+WB01/CSK 项目使用 `polaris.local.json` 中的 `projects.cskwb01`，重点填写：
+
+| 配置路径 | 说明 |
+| --- | --- |
+| `project_id` | 项目 ID，例如 `cskwb01`、`your_wb01_project`。 |
+| `serial.topology` | 保持 `csk_ap_cp_wb01_control`，表示 AP + CP + WB01/ASR + 控制口。 |
+| `serial.baudrate` | AP/CP/WB01 串口波特率，常见为 `115200`。 |
+| `serial.ports.ap` | AP/cskap 日志口。 |
+| `serial.ports.cp` | CP/cskcp 日志口；WB01 项目通常必须填写。 |
+| `serial.ports.asr` | WB01/ASR 日志口。 |
+| `serial.ports.control` | 上下电/复位控制口。 |
+| `serial.control_preconditions` | 声卡/PA 链路前置命令；当播放返回 0 但无唤醒证据时优先执行，例如 `uut-pa.on`、`pa-enable.set 0 17 0 1`，必须发到控制口。 |
+| `audio.default_playback_device_key` | 播放唤醒词/命令词的声卡稳定 key；留空时使用电脑默认声卡。 |
+| `device.wake_word` / `device.wakeup_id` | 当前唤醒词和日志里的 wakeup id。 |
+| `device.iot_id` / `cloud.device_id` | 默认可留空；只有 API/云控无法通过 `deviceinfo` 自动读取时才手动填写，两者建议保持一致。 |
+| `device.mac` | DUT MAC，用于确认设备身份。 |
+| `network.wifi_ssid` / `network.wifi_password` | 联网、断网、在线识别、在线 VAD 场景需要。 |
+| `network.enable_hotspot_control` | 只有设备连本机热点且允许脚本控制热点时才设为 `true`。 |
+| `cloud.api_environment` | API 环境，按项目调试环境填 `uat` 或 `sit`。 |
+| `cloud.device_env_command` | 切设备端环境的 AP/CSK 串口命令，如 `flash.set.int env@1` 或 `flash.set.int env@2`。 |
+| `assertion_profile` | 保持 `cp_ap_asr_three_port`，用三端证据断言。 |
+
+## WS63 项目需要填写什么
+
+WS63/AP+WiFi 项目使用 `polaris.local.json` 中的 `projects.venusws63`，重点填写：
+
+| 配置路径 | 说明 |
+| --- | --- |
+| `project_id` | 项目 ID，例如 `venusws63`、`your_ws63_project`。 |
+| `serial.topology` | 保持 `ap_wifi_control_no_cp`，表示无 CP。 |
+| `serial.baudrate` | AP/上位日志口波特率，当前 venusws63 示例为 `921600`。 |
+| `serial.control_baudrate` | 控制口波特率，当前示例为 `115200`。 |
+| `serial.ports.ap` | AP 日志口。 |
+| `serial.ports.upper` | 上位/WiFi 日志口。 |
+| `serial.ports.asr` | 兼容旧字段，通常填同一个上位/WiFi 日志口。 |
+| `serial.ports.cp` | 保持空字符串 `""`，表示无 CP。 |
+| `serial.ports.control` | 上下电/PA 控制口。 |
+| `serial.control_preconditions` | 声卡/PA 前置命令；例如 `uut-pa.on`、`pa-enable.set 0 17 0 1`，必须发到控制口。 |
+| `audio.default_playback_device_key` | 播放唤醒词/命令词的声卡稳定 key；留空时使用电脑默认声卡。 |
+| `device.wake_word` / `device.wakeup_id` | 当前唤醒词和日志里的 wakeup id。 |
+| `device.iot_id` / `cloud.device_id` | 默认可留空；只有 API/云控无法通过 `deviceinfo` 自动读取时才手动填写，两者建议保持一致。 |
+| `device.mac` | DUT MAC，用于确认设备身份。 |
+| `network.wifi_ssid` / `network.wifi_password` | 只有设备连接本机可控 Wi-Fi/热点时才填写；否则断网/联网用例应跳过或 BLOCKED。 |
+| `cloud.api_environment` | API 环境，按项目调试环境填 `uat` 或 `sit`。 |
+| `cloud.device_env_command` | 切设备端环境的 AP/CSK 串口命令，如 `flash.set.int env@1` 或 `flash.set.int env@2`。 |
+| `assertion_profile` | 保持 `ap_upper_no_cp`，用 AP + 上位/WiFi 证据断言。 |
 
 ### `serial`
 
@@ -48,12 +120,12 @@ notepad config\polaris_env.json
 
 ```json
 "audio": {
-  "default_playback_device_key": "VID_8765&PID_5678:9_2A847557_7_0000",
+  "default_playback_device_key": "",
   "playback_volume": 80
 }
 ```
 
-- `default_playback_device_key`：播放设备稳定 key。真机执行唤醒词、命令词、噪声、打断音频时必须配置。
+- `default_playback_device_key`：播放设备稳定 key。建议配置，便于多声卡机器复现；如果项目/设备没有单独写声卡 key，可留空或删除，脚本会使用电脑默认播放声卡。
 - `playback_volume`：建议记录目标音量，便于复现实验。脚本是否主动设置音量取决于具体 action。
 
 如果 key 配错，常见表现是脚本 PASS 了播放命令启动，但设备听不到声音，最终唤醒/识别失败。这类应归因到播放链路或设备听音链路，不应直接判固件失败。
@@ -73,7 +145,31 @@ notepad config\polaris_env.json
 - `wake_word`：要播放/合成的唤醒词中文文本。更换唤醒词时改这里。
 - `wakeup_id`：设备日志中的唤醒 ID，用于辅助断言和排查。
 - `model`：设备型号。某些测试项只适用于特定机型时用于 skip/block 归因。
-- `iot_id`、`mac`：联网、云端、设备状态查询时用于确认是不是当前 DUT。
+- `iot_id`、`mac`：用于确认是不是当前 DUT；默认可留空，基础唤醒/识别/命令词验证不依赖它。API/云控场景优先从 `deviceinfo` 自动读取，自动读取不到时再手动填写。
+
+### `cloud`
+
+```json
+"cloud": {
+  "api_environment": "uat",
+  "device_env": "uat",
+  "device_env_command": "flash.set.int env@1",
+  "device_env_reboot_required": true,
+  "device_id": "",
+  "note": "使用 API 前，设备端 CSK/AP 环境必须和 api_environment 一致。"
+}
+```
+
+- `api_environment`：API 请求使用的云端环境，通常是 `uat` 或 `sit`；必须和设备端调试环境一致。
+- `device_env`：设备端当前应处于的环境，建议和 `api_environment` 保持一致。
+- `device_env_command`：切换设备端 CSK/AP 环境的串口命令。
+  - UAT：`flash.set.int env@1`
+  - SIT：`flash.set.int env@2`
+  - PRO：`flash.set.int env@0`
+- `device_env_reboot_required`：切换环境后是否需要重启；当前 CSK/AP 项目默认需要 `reboot`。
+- `device_id`：API 调用使用的 deviceId/IoT ID；默认可留空。脚本能通过 `deviceinfo` 读到 IoT ID 时会优先使用自动读取值；读不到且要跑 API/云控时再手动填写，建议和 `device.iot_id` 一致。
+
+重要：只改 API 环境、不切设备端环境是不够的。执行云控/API 前，应先在 AP/CSK 串口下发 `device_env_command`，再 `reboot`，等设备联网后再调用 API。否则可能出现接口返回成功但设备不生效、connector/channel 异常或控制错环境。
 
 ### `network`
 
@@ -144,7 +240,7 @@ notepad config\polaris_env.json
   "task_id": "basic_command_smoke",
   "scenario": { "tag": "basic_command_recognition" },
   "runner": { "mode": "dry-run" },
-  "environment": { "env_file": "config/polaris_env.json" },
+  "environment": { "env_file": "polaris.local.json" },
   "inputs": {
     "command_file": "doc/fa2命令词.txt",
     "command_limit": 20
@@ -165,14 +261,14 @@ notepad config\polaris_env.json
 | `scenario.tag` | 触发哪个 Cucumber 场景，必须已在 feature/mapping/registry 中沉淀。 |
 | `runner.mode` | `plan-only`、`dry-run` 或 `execute`。建议示例文件默认 `dry-run`。 |
 | `runner.compile_first` | 是否先用 step/action/assertion registry 离线编译 feature。新 DSL/新步骤建议设为 `true`。 |
-| `environment.env_file` | 使用哪份本机环境配置。默认 `config/polaris_env.json`。 |
+| `environment.env_file` | 使用哪份本机环境配置。默认可不写；写了建议用 `polaris.local.json`。 |
 | `inputs.command_file` | 命令词/语料文件。命令词、自由说、打断候选相关场景常用。 |
 | `inputs.command_limit` | 本次最多跑多少条语料。 |
 | `execution.observe_ms` | 每轮观察窗口。 |
 | `execution.manage_session` | execute 时是否自动启动/停止串口 logger。新人建议 `true`。 |
 | `execution.allow_side_effects` | 是否允许真机副作用。示例建议保持 `false`，执行时通过命令行显式加 `--allow-side-effects`。 |
 
-命令行参数优先级高于任务文件，任务文件优先级高于 `config/polaris_env.json`。
+命令行参数优先级高于任务文件，任务文件优先级高于根目录 `polaris.local.json`，最后才回退到旧版 `config/polaris_env.json`。
 
 ## 判断结果对不对
 

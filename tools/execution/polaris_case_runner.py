@@ -23,6 +23,7 @@ from typing import Dict, List, Tuple
 import yaml
 
 from tools.audio.polaris_audio_builder import build_from_case
+from tools.core.polaris_config import read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, read_lines_between, workspace_root
 from tools.probe.polaris_state_probe import diff_states, snapshot
 
@@ -47,7 +48,16 @@ def load_case(case_path: Path) -> dict:
 
 
 def load_env() -> dict:
-    return json.loads(ENV_CONFIG.read_text(encoding="utf-8"))
+    return read_env_config()
+
+
+def default_playback_device_key(env: dict) -> str:
+    audio = env.get("audio", {}) if isinstance(env.get("audio"), dict) else {}
+    return str(env.get("default_playback_device_key") or audio.get("default_playback_device_key") or "").strip()
+
+
+def playback_device_label(device_key: str) -> str:
+    return str(device_key or "").strip() or "system-default"
 
 
 def sanitize_line(line: str) -> str:
@@ -78,15 +88,16 @@ def run_playback(
     skip_probe: bool = False,
     log_prefix: str = "play",
 ) -> subprocess.CompletedProcess:
+    device_key = str(device_key or "").strip()
     cmd = [
         sys.executable,
         str(LISTENAI_PLAY_SCRIPT),
         "play",
         "--audio-file",
         str(audio_file),
-        "--device-key",
-        device_key,
     ]
+    if device_key:
+        cmd.extend(["--device-key", device_key])
     if skip_probe:
         cmd.append("--skip-probe")
     completed = subprocess.run(
@@ -101,7 +112,16 @@ def run_playback(
     (execution_dir / f"{log_prefix}_stdout.log").write_text(completed.stdout, encoding="utf-8")
     (execution_dir / f"{log_prefix}_stderr.log").write_text(completed.stderr, encoding="utf-8")
     (execution_dir / f"{log_prefix}_command.json").write_text(
-        json.dumps({"cmd": cmd, "returncode": completed.returncode}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "cmd": cmd,
+                "returncode": completed.returncode,
+                "device_key": device_key,
+                "playback_device": playback_device_label(device_key),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return completed
@@ -349,7 +369,7 @@ def run_case(case_path: Path, device_key: str = "") -> Path:
     try:
         env = load_env()
         case_spec = load_case(case_path)
-        device_key = device_key or env["default_playback_device_key"]
+        device_key = str(device_key or default_playback_device_key(env)).strip()
         execution_dir = new_artifact_dir(f"case_run_{case_spec['case_id']}", session_dir)
         shutil.copy2(case_path, execution_dir / case_path.name)
 
@@ -411,6 +431,7 @@ def run_case(case_path: Path, device_key: str = "") -> Path:
             "name": case_spec["name"],
             "mode": case_spec.get("mode", ""),
             "device_key": device_key,
+            "playback_device": playback_device_label(device_key),
             "execution_dir": str(execution_dir),
             "session_dir": str(session_dir),
             "started_at": start_dt.isoformat(timespec="milliseconds"),
@@ -446,7 +467,7 @@ def run_case(case_path: Path, device_key: str = "") -> Path:
             f"- Classification: `{diagnosis['failure_type'] or 'PASS'}`",
             f"- Suspected root cause: `{diagnosis['suspected_root_cause'] or 'none'}`",
             f"- Reason: {diagnosis['reason']}",
-            f"- Playback device: `{device_key}`",
+            f"- Playback device: `{playback_device_label(device_key)}`",
             f"- Observe window: `{result['started_at']}` ~ `{result['ended_at']}`",
             f"- Judge artifact: `{judge_path}`",
             f"- Fingerprint artifact: `{fingerprint_path}`",

@@ -30,3 +30,6 @@ satellite/cucumber-agent-testing/debug/*
 !satellite/cucumber-agent-testing/debug/.gitkeep
 satellite/cucumber-agent-testing/**/__pycache__/
 satellite/cucumber-agent-testing/**/*.pyc
+
+# archived local runtime/debug evidence
+_runtime/

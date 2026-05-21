@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Local configuration helpers for Polaris tools.
 
-`config/polaris_local_ports.json` is the local override file. Tools should read
-ports from it when a CLI option is omitted, and sync explicit CLI choices back
-to it so later commands inherit the latest mapping.
+`polaris.local.json` in the skill root is the preferred user-facing config.
+`config/polaris_local_ports.json` remains a legacy compatibility cache.
 """
 from __future__ import annotations
 
@@ -18,6 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL_PORT_CONFIG = ROOT / "config" / "polaris_local_ports.json"
 ENV_CONFIG = ROOT / "config" / "polaris_env.json"
+ROOT_LOCAL_CONFIG = ROOT / "polaris.local.json"
 
 DEFAULT_PORTS = {
     "ap": "COM14",
@@ -35,6 +35,8 @@ ROLE_ALIASES = {
     "cp_uart": "cp",
     "wb01": "asr",
     "wb": "asr",
+    "upper": "asr",
+    "wifi": "asr",
     "power": "control",
     "power_control": "control",
 }
@@ -63,7 +65,7 @@ def read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return {}
 
@@ -73,21 +75,94 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def normalize_env_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    projects = payload.get("projects")
+    if not isinstance(projects, dict):
+        return payload
+    active_project = str(payload.get("active_project") or payload.get("project_id") or "").strip()
+    if not active_project and len(projects) == 1:
+        active_project = next(iter(projects))
+    profile = projects.get(active_project)
+    if not isinstance(profile, dict):
+        return {}
+    common = payload.get("common") if isinstance(payload.get("common"), dict) else {}
+    merged = deep_merge(common, profile)
+    merged.setdefault("project_id", active_project)
+    return merged
+
+
+def read_env_config() -> dict[str, Any]:
+    if ROOT_LOCAL_CONFIG.exists():
+        return normalize_env_payload(read_json(ROOT_LOCAL_CONFIG))
+    return normalize_env_payload(read_json(ENV_CONFIG))
+
+
+def update_root_local_port(role: str, port: str) -> None:
+    if not ROOT_LOCAL_CONFIG.exists():
+        return
+    payload = read_json(ROOT_LOCAL_CONFIG)
+    projects = payload.get("projects")
+    if not isinstance(projects, dict):
+        payload.setdefault("serial", {}).setdefault("ports", {})[role] = port
+    else:
+        active_project = str(payload.get("active_project") or payload.get("project_id") or "").strip()
+        project = projects.get(active_project)
+        if not isinstance(project, dict):
+            return
+        ports = project.setdefault("serial", {}).setdefault("ports", {})
+        ports[role] = port
+        if role == "asr" and "upper" in ports:
+            ports["upper"] = port
+    write_json(ROOT_LOCAL_CONFIG, payload)
+
+
+def update_root_local_baudrate(baudrate: int) -> None:
+    if not ROOT_LOCAL_CONFIG.exists():
+        return
+    payload = read_json(ROOT_LOCAL_CONFIG)
+    projects = payload.get("projects")
+    if not isinstance(projects, dict):
+        payload.setdefault("serial", {})["baudrate"] = int(baudrate)
+    else:
+        active_project = str(payload.get("active_project") or payload.get("project_id") or "").strip()
+        project = projects.get(active_project)
+        if not isinstance(project, dict):
+            return
+        project.setdefault("serial", {})["baudrate"] = int(baudrate)
+    write_json(ROOT_LOCAL_CONFIG, payload)
+
+
 def seed_from_env() -> dict[str, Any]:
-    env = read_json(ENV_CONFIG)
+    env = read_env_config()
     ports = dict(DEFAULT_PORTS)
-    env_ports = env.get("ports", {}) if isinstance(env.get("ports"), dict) else {}
+    serial = env.get("serial", {}) if isinstance(env.get("serial"), dict) else {}
+    env_ports = serial.get("ports", {}) if isinstance(serial.get("ports"), dict) else {}
+    if not env_ports:
+        env_ports = env.get("ports", {}) if isinstance(env.get("ports"), dict) else {}
     for role in ("ap", "cp", "asr", "control"):
         value = env_ports.get(role) or env_ports.get("wb01" if role == "asr" else role)
-        if value:
-            ports[role] = normalize_port(value)
+        if role in env_ports or ("wb01" if role == "asr" else role) in env_ports:
+            ports[role] = normalize_port(value or "")
+    if env_ports.get("upper") and not ports.get("asr"):
+        ports["asr"] = normalize_port(env_ports.get("upper") or "")
     ports["cskap"] = ports["ap"]
     ports["cskcp"] = ports["cp"]
 
+    baudrate = serial.get("baudrate", env.get("baudrate", DEFAULT_BAUDRATE))
     payload = {
         "updated_at": now_iso(),
-        "source": "seeded-from-polaris-env",
-        "baudrate": int(env.get("baudrate", DEFAULT_BAUDRATE) or DEFAULT_BAUDRATE),
+        "source": "seeded-from-root-local" if ROOT_LOCAL_CONFIG.exists() else "seeded-from-polaris-env",
+        "baudrate": int(baudrate or DEFAULT_BAUDRATE),
         "ports": ports,
         "aliases": dict(ROLE_ALIASES),
     }
@@ -105,7 +180,9 @@ def refresh_role_index(payload: dict[str, Any]) -> dict[str, Any]:
         "control": "power-control",
     }
     for role, label in role_labels.items():
-        value = ports.get(role) or DEFAULT_PORTS.get(role)
+        value = ports.get(role)
+        if value is None:
+            value = DEFAULT_PORTS.get(role)
         if value:
             roles[normalize_port(value)] = label
     payload["roles"] = roles
@@ -113,17 +190,19 @@ def refresh_role_index(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_port_config(create: bool = True) -> dict[str, Any]:
-    payload = read_json(LOCAL_PORT_CONFIG)
+    # Root local config is authoritative when present; local_ports is kept as a
+    # generated compatibility cache for older scripts.
+    payload = seed_from_env() if ROOT_LOCAL_CONFIG.exists() else read_json(LOCAL_PORT_CONFIG)
     if not payload:
         payload = seed_from_env()
         if create:
             write_json(LOCAL_PORT_CONFIG, payload)
     payload.setdefault("ports", {})
     for key, value in DEFAULT_PORTS.items():
-        payload["ports"].setdefault(key, value)
+        if key not in payload["ports"]:
+            payload["ports"][key] = value
     for key, value in list(payload["ports"].items()):
-        if value:
-            payload["ports"][key] = normalize_port(value)
+        payload["ports"][key] = normalize_port(value or "")
     payload["ports"]["cskap"] = payload["ports"].get("ap", DEFAULT_PORTS["ap"])
     payload["ports"]["cskcp"] = payload["ports"].get("cp", DEFAULT_PORTS["cp"])
     payload["ports"]["wb01"] = payload["ports"].get("asr", DEFAULT_PORTS["asr"])
@@ -132,6 +211,8 @@ def load_port_config(create: bool = True) -> dict[str, Any]:
     for key, value in ROLE_ALIASES.items():
         aliases.setdefault(key, value)
     refresh_role_index(payload)
+    if ROOT_LOCAL_CONFIG.exists() and create:
+        write_json(LOCAL_PORT_CONFIG, payload)
     return payload
 
 
@@ -155,14 +236,15 @@ def set_baudrate(baudrate: int, source: str = "cli") -> None:
         {"ts": now_iso(), "role": "baudrate", "value": int(baudrate), "source": source}
     )
     save_port_config(payload)
+    update_root_local_baudrate(int(baudrate))
 
 
 def get_port(role: str, default: str | None = None) -> str:
     key = normalize_role(role)
     payload = load_port_config()
-    value = payload.get("ports", {}).get(key)
-    if value:
-        return normalize_port(value)
+    ports = payload.get("ports", {})
+    if key in ports:
+        return normalize_port(ports.get(key) or "")
     fallback = default or DEFAULT_PORTS.get(key)
     if not fallback:
         raise KeyError(f"unknown Polaris port role: {role}")
@@ -186,6 +268,7 @@ def sync_port(role: str, port: str, source: str = "cli") -> dict[str, Any]:
         {"ts": now_iso(), "role": key, "port": port_value, "source": source}
     )
     save_port_config(payload)
+    update_root_local_port(key, port_value)
     return payload
 
 
@@ -203,11 +286,14 @@ def serial_logger_ports() -> dict[str, dict[str, Any]]:
     ap = get_port("ap")
     cp = get_port("cp")
     asr = get_port("asr")
-    return {
-        cp: {"role": "cskcp", "writable": False},
-        asr: {"role": "asr", "writable": True},
-        ap: {"role": "cskap", "writable": True},
-    }
+    result: dict[str, dict[str, Any]] = {}
+    if cp:
+        result[cp] = {"role": "cskcp", "writable": False}
+    if asr:
+        result[asr] = {"role": "asr", "writable": True}
+    if ap:
+        result[ap] = {"role": "cskap", "writable": True}
+    return result
 
 
 def configured_log_ports() -> list[str]:
@@ -215,7 +301,7 @@ def configured_log_ports() -> list[str]:
     ports: list[str] = []
     for role in ("cp", "asr", "ap"):
         port = get_port(role)
-        if port not in ports:
+        if port and port not in ports:
             ports.append(port)
     return ports
 

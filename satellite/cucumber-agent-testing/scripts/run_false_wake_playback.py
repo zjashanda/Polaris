@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Run synthetic playback-based false wake smoke tests."""
 
@@ -33,7 +33,7 @@ from tools.audio.polaris_audio_builder import CHANNELS, SAMPLE_RATE, SAMPLE_WIDT
 from tools.execution.polaris_case_runner import run_playback  # noqa: E402
 
 
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 HUMAN_SENTENCES = [
     "今天我们讨论一下空调节能和室内舒适度。",
     "这是一段普通人声干扰内容，不包含目标唤醒词。",
@@ -230,3 +230,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

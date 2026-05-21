@@ -17,15 +17,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from tools.audio.polaris_audio_builder import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH, ensure_tts_pcm, read_pcm, silence_pcm
-from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports
+from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports, read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, parse_prefixed_timestamp, read_lines_between
-from tools.execution.polaris_case_runner import sanitize_logs, summarize_window
+from tools.execution.polaris_case_runner import default_playback_device_key, playback_device_label, sanitize_logs, summarize_window
 from tools.execution.polaris_doc_case_runner import collect_metrics
 
 
 LISTENAI_PLAY_SCRIPT = Path(r"C:\Users\Administrator\.codex\skills\listenai-play\scripts\listenai_play.py")
 DEFAULT_COMMAND_FILE = Path("doc") / "fa2命令词.txt"
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 KEY_MARKERS = (
     "WAKE(",
@@ -147,15 +147,16 @@ def build_batch_audio(
 
 
 def run_playback(audio_file: Path, device_key: str, output_dir: Path, timeout_s: int) -> dict:
+    device_key = str(device_key or "").strip()
     cmd = [
         sys.executable,
         str(LISTENAI_PLAY_SCRIPT),
         "play",
         "--audio-file",
         str(audio_file),
-        "--device-key",
-        device_key,
     ]
+    if device_key:
+        cmd.extend(["--device-key", device_key])
     started_at = datetime.now()
     playback_started_at: Optional[datetime] = None
     lines: List[str] = []
@@ -190,6 +191,8 @@ def run_playback(audio_file: Path, device_key: str, output_dir: Path, timeout_s:
     payload = {
         "cmd": cmd,
         "returncode": returncode,
+        "device_key": device_key,
+        "playback_device": playback_device_label(device_key),
         "process_started_at": started_at.isoformat(timespec="milliseconds"),
         "playback_started_at": (playback_started_at or started_at).isoformat(timespec="milliseconds"),
         "finished_at": finished_at.isoformat(timespec="milliseconds"),
@@ -397,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    args.device_key = str(args.device_key or default_playback_device_key(read_env_config())).strip()
     session_dir = current_session_dir()
     commands = read_commands(args.command_file)
     if args.start_index > 1:
@@ -435,6 +439,7 @@ def main() -> int:
         "output_dir": str(output_dir),
         "command_file": str(args.command_file),
         "device_key": args.device_key,
+        "playback_device": playback_device_label(args.device_key),
         "audio_file": str(audio_file),
         "wake_word": args.wake_word,
         "playback_returncode": playback["returncode"],

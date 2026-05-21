@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from polaris_env import load_env_payload, resolve_env_path
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BDD_ROOT = SCRIPT_DIR.parents[0]
@@ -89,7 +91,7 @@ def stamp() -> str:
 
 
 def load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def first_non_empty(*values: Any) -> str:
@@ -234,12 +236,8 @@ def quote_cmd(args: List[str]) -> str:
 def resolve_context(args: argparse.Namespace, mapping: Dict[str, Any]) -> Dict[str, str]:
     defaults = mapping.get("defaults", {})
     env_payload: Dict[str, Any] = {}
-    env_path = Path(args.env_file).resolve() if getattr(args, "env_file", "") else WORKSPACE_ROOT / "config" / "polaris_env.json"
-    if env_path.exists():
-        try:
-            env_payload = load_json(env_path)
-        except Exception:
-            env_payload = {}
+    env_path = resolve_env_path(getattr(args, "env_file", ""), WORKSPACE_ROOT)
+    env_payload = load_env_payload(env_path)
     device_key = first_non_empty(
         args.device_key,
         defaults.get("device_key", ""),
@@ -308,6 +306,22 @@ def fill_placeholders(value: str, context: Dict[str, str]) -> str:
     return result
 
 
+OPTIONAL_VALUE_OPTIONS = {"--device-key", "--left-device-key", "--right-device-key"}
+
+
+def drop_empty_optional_values(cmd: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    index = 0
+    while index < len(cmd):
+        item = cmd[index]
+        if item in OPTIONAL_VALUE_OPTIONS and index + 1 < len(cmd) and not str(cmd[index + 1]).strip():
+            index += 2
+            continue
+        cleaned.append(item)
+        index += 1
+    return cleaned
+
+
 def render_params(params: Dict[str, Any], context: Dict[str, str]) -> Dict[str, str]:
     rendered = dict(context)
     for key, value in params.items():
@@ -323,7 +337,7 @@ def render_params(params: Dict[str, Any], context: Dict[str, str]) -> Dict[str, 
 
 
 def build_command_from_template(name: str, template: List[str], context: Dict[str, str]) -> CommandPlan:
-    cmd = [fill_placeholders(str(part), context) for part in template]
+    cmd = drop_empty_optional_values([fill_placeholders(str(part), context) for part in template])
     return CommandPlan(name=name, cmd=cmd, cmdline=quote_cmd(cmd))
 
 
@@ -580,7 +594,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Compile Cucumber feature into an offline executable plan.")
     parser.add_argument("--feature", default=str(DEFAULT_FEATURE))
     parser.add_argument("--mapping", default=str(DEFAULT_MAPPING))
-    parser.add_argument("--env-file", default="", help="本地环境配置 JSON，默认读取 config/polaris_env.json")
+    parser.add_argument("--env-file", default="", help="本地环境配置 JSON，默认读取 polaris.local.json，兼容 config/polaris_env.json")
     parser.add_argument("--step-registry", default=str(DEFAULT_STEP_REGISTRY))
     parser.add_argument("--action-registry", default=str(DEFAULT_ACTION_REGISTRY))
     parser.add_argument("--contracts", default=str(DEFAULT_CONTRACTS))

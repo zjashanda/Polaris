@@ -41,15 +41,16 @@
 - `COM14` = AP，可写
 - `COM15` = 电源/复位控制，可写
 
-本机串口映射统一写在：
+本机基础配置统一写在：
 
-- `config/polaris_local_ports.json`
+- `polaris.local.json`（主入口，按 `active_project` 区分项目）
+- `config/polaris_local_ports.json`（旧版兼容缓存）
 
 规则：
 
-- 工具命令未显式指定串口时，默认读取 `config/polaris_local_ports.json`。
-- 工具命令显式指定串口时，会把该角色的新串口同步回 `config/polaris_local_ports.json`。
-- `config/polaris_env.json` 保留运行环境与历史兼容字段；本机串口覆盖以 `config/polaris_local_ports.json` 为准。
+- 工具命令未显式指定串口时，优先读取 `polaris.local.json` 当前项目配置。
+- 工具命令显式指定串口时，会把该角色的新串口同步回 `polaris.local.json`，并同步旧版缓存。
+- `config/polaris_env.json` 保留为历史兼容兜底；新项目不要继续把基础配置堆到 `config/`。
 
 如果换机器后 COM 号变了，优先修这里：
 
@@ -57,20 +58,22 @@
 - 手动同步角色：`python tools/core/polaris_config.py set --role ap --port COM14`
 - 手动同步控制串口：`python tools/core/polaris_config.py set --role control --port COM15`
 - 直接执行带显式串口的命令，例如 `python tools/device/polaris_power_control.py cycle --target asr --port COM15`
-- 或手动编辑 `config/polaris_local_ports.json`
+- 或手动编辑 `polaris.local.json`
 
-兼容规则：老脚本里写死的 `COM12/COM13/COM14` 不再直接视为物理端口，而是按 `cp/asr/ap` 角色映射到本地配置中的实际端口；如果确实要向某个物理端口直发，使用支持 `--port` 的工具显式指定。
+兼容规则：老脚本里写死的 `COM12/COM13/COM14` 不再直接视为物理端口，而是按 `cp/asr/ap` 角色映射到本地配置中的实际端口；WS63 这类无 CP 项目会跳过空 `cp` 端口。如果确实要向某个物理端口直发，使用支持 `--port` 的工具显式指定。
 
 注意：串口 logger 启动时会读取一次本地配置；如果运行中改了 COM 映射，需要停止并重启 `polaris_serial_harness.py start` 后新映射才会进入采集线程。
 
 ### 2.2 播放链路
 
 - 主机必须有一个能稳定播放到 DUT 麦克风的输出设备。
-- 播放设备需要有稳定的 `device_key`，并能被 `listenai-play` 正常识别。
+- 播放设备建议配置稳定 `device_key`，并能被 `listenai-play` 正常识别；如果项目/设备没有单独写声卡 key，则使用电脑默认播放声卡。
 
 当前默认值来自：
 
-- `config/polaris_env.json -> default_playback_device_key`
+- `polaris.local.json -> common.audio.default_playback_device_key` 或项目自己的 `audio.default_playback_device_key`
+
+该字段留空或不存在时，播放命令会省略 `--device-key`，由 `listenai-play` 绑定系统默认输出设备。多声卡机器上如果出现“播放返回 0 但设备无唤醒”，先确认系统默认声卡是否正确。
 
 ### 2.3 设备身份信息
 
@@ -88,15 +91,15 @@
 
 补充说明：
 
-- 如果重启后 `deviceinfo` 临时只回部分字段，当前脚本会回退使用 `config/polaris_env.json -> current_deviceinfo`，不会再因此阻断云控。
+- 如果重启后 `deviceinfo` 临时只回部分字段，当前脚本会优先通过 `deviceinfo` 自动读取；旧版脚本才回退使用 `config/polaris_env.json -> current_deviceinfo`，不会再因此阻断云控。
 
 ## 3. 仓库内必须保留的数据
 
 迁移 skill 时，以下内容建议一起带走：
 
 - `SKILL.md`
-- `capabilities-and-usage.md`
-- `environment-and-migration.md`
+- `docs/skill/capabilities-and-usage.md`
+- `docs/skill/environment-and-migration.md`
 - `config/*.json`
 - `config/*.md`
 - `doc/api/common_request.py`
@@ -151,7 +154,7 @@ python tools/device/polaris_serial_harness.py send --session-dir $session --role
 
 ### 第 3 步：确认播放链路
 
-- 检查 `default_playback_device_key` 是否还是正确设备。
+- 检查 `default_playback_device_key` 是否还是正确设备；如果留空，则检查电脑默认播放设备是否正确。
 - 执行一次唤醒探测，确认 DUT 能真正听到播放音频。
 
 ### 第 4 步：采集设备身份
@@ -241,3 +244,4 @@ python tools/reporting/polaris_status_sync.py
 - 自定义唤醒词本地生效
 
 建议在新设备上重新验证通过后，再把它们加入主 skill。
+

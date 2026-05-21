@@ -17,20 +17,19 @@ base_url = "ws://wsapi.xfyun.cn/v1/aiui"
 
 # 账号
 # 海尔
-app_id = os.environ.get("POLARIS_XFYUN_APP_ID", "")
-api_key = os.environ.get("POLARIS_XFYUN_API_KEY", "")
-auth_id = os.environ.get("POLARIS_XFYUN_AUTH_ID", "")
+app_id = "5af3aa4f"
+api_key = "fe85d97976354eeeaf3d0122fb44ba2b"
 # 美的
-#app_id = os.environ.get("POLARIS_XFYUN_APP_ID", "")
-#api_key = os.environ.get("POLARIS_XFYUN_API_KEY", "")
+#app_id = "5e017c12"
+#api_key = "b1c9db5797d7bd16567bb2e6a34cf075"
 
 # 聆思
-# app_id = os.environ.get("POLARIS_XFYUN_APP_ID", "")
-# api_key = os.environ.get("POLARIS_XFYUN_API_KEY", "")
+# app_id = "3899071b"
+# api_key = "96e150958f1f5df3ba06bfefb5952134"
 
 # 聆思2
-# app_id = os.environ.get("POLARIS_XFYUN_APP_ID", "")
-# api_key = os.environ.get("POLARIS_XFYUN_API_KEY", "")
+# app_id = "6396ed00"
+# api_key = "b54737b99bfc33825c17a80708eba936"
 
 # 待合成文本txt路径
 tts_path = r'.\tts.txt'
@@ -144,39 +143,39 @@ async def processTask(ttsContent):
         #pcm
         if(audio_format =='pcm'):
             if(ent_vcn == 'x2_yezi_haier' or ent_vcn == 'x2_yezi_sc_haier'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
             elif(ent_vcn == 'x4_qianqian'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
             elif(ent_vcn == 'x4_yezi'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
             elif(ent_vcn == 'x4_yuexiaoni_assist'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
             elif(ent_vcn == 'x_dangdang'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
             else:
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"60\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"60\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"        
         #mp3
         elif(audio_format =='mp3'):
             if(ent_vcn == 'x2_yezi_haier' or ent_vcn == 'x2_yezi_sc_haier'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
             elif(ent_vcn == 'x4_qianqian'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
             elif(ent_vcn == 'x4_yezi'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"45\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
             elif(ent_vcn == 'x4_yuexiaoni_assist'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
             elif(ent_vcn == 'x_dangdang'):
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
             else:
-                param = "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+                param = "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"" + ent_vcn + "\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
         else:
             print('invalid audio format!')
     #情感发音人
     else:
         if(audio_format =='pcm'):
-            param =  "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"x2_xiaoye_haier\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"attach_params\":\"{\\\"tts_params\\\":\\\"tts_emotion=1,tts_emotion_scale=10\\\"}\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+            param =  "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"x2_xiaoye_haier\",\"aue\":\"raw\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"attach_params\":\"{\\\"tts_params\\\":\\\"tts_emotion=1,tts_emotion_scale=10\\\"}\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
         elif(audio_format =='mp3'):
-            param =  "{\"auth_id\":\"" + auth_id + "\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"x2_xiaoye_haier\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"attach_params\":\"{\\\"tts_params\\\":\\\"tts_emotion=1,tts_emotion_scale=10\\\"}\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
+            param =  "{\"auth_id\":\"894c985bf8b1111c6728db79d3479aeg\",\"data_type\":\"text\",\"speed\":\"50\",\"pitch\":\"50\",\"volume\":\"100\",\"ent\":\"xtts\",\"vcn\":\"x2_xiaoye_haier\",\"aue\":\"lame\",\"sfl\":\"1\",\"scene\":\"IFLYTEK.tts\",\"sample_rate\":\"16000\",\"vad_info\":\"end\",\"attach_params\":\"{\\\"tts_params\\\":\\\"tts_emotion=1,tts_emotion_scale=10\\\"}\",\"ver_type\":\"monitor\",\"result_level\":\"plain\"}"
         else:
             print('invalid audio format!')
     #print('param:\n',param)

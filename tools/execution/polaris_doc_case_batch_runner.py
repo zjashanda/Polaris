@@ -20,7 +20,7 @@ from tools.core.polaris_runtime import current_session_dir, find_artifact_files,
 
 
 ROOT = workspace_root()
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 
 
 def now_text() -> str:
@@ -90,9 +90,9 @@ def run_case(
         str(ROOT / "tools" / "execution" / "polaris_doc_case_runner.py"),
         "--case-id",
         case_id,
-        "--device-key",
-        device_key,
     ]
+    if str(device_key or "").strip():
+        command.extend(["--device-key", str(device_key).strip()])
     append_log(queue_log, f"start case {case_id}")
     with stdout_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open("w", encoding="utf-8") as stderr_handle:
         completed = subprocess.run(

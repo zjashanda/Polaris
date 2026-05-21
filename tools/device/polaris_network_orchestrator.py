@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, queue_command, read_lines_between
 
@@ -44,6 +44,7 @@ AP_KEYWORDS = [
     "device.event.keepAlive.ack",
     "Do not upload log since wifi offline",
     "bootloader application",
+    "cloud status :0x04",
 ]
 TETHERING_RESULT_TYPE = "[Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult]"
 
@@ -113,6 +114,45 @@ $obj | ConvertTo-Json -Depth 4 -Compress
     return run_powershell(script)
 
 
+def normalize_mac(raw: str) -> str:
+    return raw.strip().lower().replace("-", ":")
+
+
+def hotspot_has_device(status: Dict[str, Any], device_mac: str) -> bool:
+    target = normalize_mac(device_mac)
+    if not target:
+        return False
+    for client in status.get("clients", []):
+        if normalize_mac(str(client.get("mac_address", ""))) == target:
+            return True
+    return False
+
+
+def summarize_hotspot_state(status: Dict[str, Any], device_mac: str = "") -> Dict[str, Any]:
+    return {
+        "operational_state": status.get("operational_state", ""),
+        "client_count": int(status.get("client_count", 0) or 0),
+        "ssid": status.get("ssid", ""),
+        "device_attached": hotspot_has_device(status, device_mac) if device_mac else None,
+        "device_mac": device_mac,
+    }
+
+
+def network_window_indicates_online(window: Dict[str, Any]) -> bool:
+    analysis = window.get("analysis", {})
+    return any(
+        int(analysis.get(key, 0) or 0) > 0
+        for key in [
+            "rssi_ok_count",
+            "cloud_login_count",
+            "keepalive_count",
+            "route_info_upload_count",
+            "heartbeat_count",
+            "cloud_status_online_count",
+        ]
+    )
+
+
 def command_window(
     port: str,
     command: str,
@@ -168,6 +208,9 @@ def analyze_window(wb_lines: List[str], ap_lines: List[str]) -> Dict[str, Any]:
     cloud_login = [line for line in ap_lines if "cloud.online.reply" in line.lower()]
     keepalive = [line for line in ap_lines if "device.event.keepalive.ack" in line.lower()]
     wifi_offline = [line for line in ap_lines if "do not upload log since wifi offline" in line.lower()]
+    route_info_upload = [line for line in wb_lines if "route info upload ok" in line.lower()]
+    heartbeat = [line for line in wb_lines if "get heartbeat from cloud" in line.lower()]
+    cloud_status_online = [line for line in ap_lines + wb_lines if "cloud status :0x04" in line.lower()]
     return {
         "connect_route_count": len(connect_route),
         "vir_ssid_count": len(vir_ssid),
@@ -177,6 +220,9 @@ def analyze_window(wb_lines: List[str], ap_lines: List[str]) -> Dict[str, Any]:
         "cloud_login_count": len(cloud_login),
         "keepalive_count": len(keepalive),
         "wifi_offline_count": len(wifi_offline),
+        "route_info_upload_count": len(route_info_upload),
+        "heartbeat_count": len(heartbeat),
+        "cloud_status_online_count": len(cloud_status_online),
         "connect_route_lines": connect_route,
         "vir_ssid_lines": vir_ssid,
         "conn_scan_fail_lines": conn_scan_fail,
@@ -185,6 +231,9 @@ def analyze_window(wb_lines: List[str], ap_lines: List[str]) -> Dict[str, Any]:
         "cloud_login_lines": cloud_login,
         "keepalive_lines": keepalive,
         "wifi_offline_lines": wifi_offline,
+        "route_info_upload_lines": route_info_upload,
+        "heartbeat_lines": heartbeat,
+        "cloud_status_online_lines": cloud_status_online,
     }
 
 
@@ -266,6 +315,93 @@ def action_vir_reboot(args: argparse.Namespace) -> None:
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
+def action_ensure_online(args: argparse.Namespace) -> None:
+    session_dir = current_session_dir()
+    artifact_dir = Path(args.output_dir) if args.output_dir else new_artifact_dir(args.label, session_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    env_path = ROOT / "config" / "polaris_env.json"
+    env = json.loads(env_path.read_text(encoding="utf-8")) if env_path.exists() else {}
+    device_mac = str(args.device_mac or env.get("current_deviceinfo", {}).get("mac", "")).strip()
+    ssid = str(args.ssid or env.get("current_connected_ssid", "") or "pcwifi24")
+    pwd = str(args.pwd or "12345678")
+    actions: List[Dict[str, Any]] = []
+
+    before_status = hotspot_status()
+    status = before_status
+    if str(status.get("operational_state", "")).lower() != "on":
+        start_dt = datetime.now()
+        start_result = hotspot_set(True)
+        time.sleep(float(args.hotspot_wait))
+        end_dt = datetime.now()
+        status = hotspot_status()
+        window = collect_window(session_dir, start_dt, end_dt, artifact_dir, "01_hotspot_start")
+        actions.append(
+            {
+                "action": "hotspot_on",
+                "result": start_result,
+                "status": summarize_hotspot_state(status, device_mac),
+                "window": window,
+            }
+        )
+
+    need_reboot = args.force_reboot or not hotspot_has_device(status, device_mac)
+    reboot_window: Optional[Dict[str, Any]] = None
+    if need_reboot:
+        commands = [
+            command_window("COM13", f"listen flash set string vir_ssid {ssid}", session_dir=session_dir),
+            command_window("COM13", f"listen flash set string vir_pwd {pwd}", session_dir=session_dir),
+            command_window("COM13", "listen flash show", session_dir=session_dir, settle_s=2.5),
+        ]
+        for index, entry in enumerate(commands, 1):
+            write_json(artifact_dir / f"command_{index:02d}.json", entry)
+
+        reboot_start = datetime.now()
+        queue_command("COM13", "reboot", session_dir=session_dir)
+        time.sleep(float(args.reboot_wait))
+        reboot_end = datetime.now()
+        status = hotspot_status()
+        reboot_window = collect_window(session_dir, reboot_start, reboot_end, artifact_dir, "02_after_reboot")
+        actions.append(
+            {
+                "action": "vir_config_reboot",
+                "commands": commands,
+                "status": summarize_hotspot_state(status, device_mac),
+                "window": reboot_window,
+            }
+        )
+
+    verify_start = datetime.now()
+    time.sleep(float(args.verify_wait))
+    verify_end = datetime.now()
+    final_status = hotspot_status()
+    verify_window = collect_window(session_dir, verify_start, verify_end, artifact_dir, "03_verify_online")
+
+    online_evidence = network_window_indicates_online(verify_window) or (
+        reboot_window is not None and network_window_indicates_online(reboot_window)
+    )
+    hotspot_on = str(final_status.get("operational_state", "")).lower() == "on"
+    attached = hotspot_has_device(final_status, device_mac)
+    success = hotspot_on and (attached or not device_mac) and online_evidence
+    summary = {
+        "action": "ensure-online",
+        "artifact_dir": str(artifact_dir),
+        "session_dir": str(session_dir),
+        "success": success,
+        "target_ssid": ssid,
+        "device_mac": device_mac,
+        "before_status": summarize_hotspot_state(before_status, device_mac),
+        "final_status": summarize_hotspot_state(final_status, device_mac),
+        "actions": actions,
+        "verify_window": verify_window,
+        "online_evidence": online_evidence,
+    }
+    write_json(artifact_dir / "summary.json", summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if not success:
+        raise SystemExit(2)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Polaris network orchestration helper")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -286,6 +422,18 @@ def build_parser() -> argparse.ArgumentParser:
     vir_reboot.add_argument("--wait", type=float, default=60.0)
     vir_reboot.add_argument("--output-dir", default=None)
     vir_reboot.set_defaults(handler=action_vir_reboot)
+
+    ensure_online = sub.add_parser("ensure-online", help="start hotspot, attach DUT, reboot if needed, and verify online evidence")
+    ensure_online.add_argument("--ssid", default="")
+    ensure_online.add_argument("--pwd", default="")
+    ensure_online.add_argument("--device-mac", default="")
+    ensure_online.add_argument("--hotspot-wait", type=float, default=12.0)
+    ensure_online.add_argument("--reboot-wait", type=float, default=70.0)
+    ensure_online.add_argument("--verify-wait", type=float, default=8.0)
+    ensure_online.add_argument("--force-reboot", action="store_true")
+    ensure_online.add_argument("--label", default="network_ensure_online")
+    ensure_online.add_argument("--output-dir", default=None)
+    ensure_online.set_defaults(handler=action_ensure_online)
     return parser
 
 

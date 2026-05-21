@@ -22,7 +22,7 @@ from tools.core.polaris_runtime import current_session_dir, find_artifact_files,
 ROOT = Path(__file__).resolve().parents[2]
 SESSION_DIR = current_session_dir()
 LOCK_PATH = SESSION_DIR / ".case_runner.lock"
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 QUEUE_CASES = [
     "美的空调_45",
     "美的空调_709",
@@ -75,9 +75,9 @@ def run_case(case_id: str, device_key: str, queue_log: Path, queue_dir: Path) ->
         str(ROOT / "tools" / "execution" / "polaris_doc_case_runner.py"),
         "--case-id",
         case_id,
-        "--device-key",
-        device_key,
     ]
+    if str(device_key or "").strip():
+        command.extend(["--device-key", str(device_key).strip()])
     append_log(queue_log, f"start case {case_id}")
     with stdout_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open("w", encoding="utf-8") as stderr_handle:
         completed = subprocess.run(

@@ -28,7 +28,9 @@ from tools.cloud.polaris_app_control import response_to_dict as cloud_response_t
 from tools.audio.polaris_audio_builder import build_sequence
 from tools.execution.polaris_case_runner import (
     LISTENAI_PLAY_SCRIPT,
+    default_playback_device_key,
     playback_timeout_seconds,
+    playback_device_label,
     run_playback,
     sanitize_logs,
     summarize_window,
@@ -41,6 +43,7 @@ from tools.device.polaris_power_control import COMMANDS as POWER_COMMANDS
 from tools.device.polaris_power_control import collect_window_logs as collect_power_window_logs
 from tools.device.polaris_power_control import infer_cycle as infer_power_cycle
 from tools.device.polaris_power_control import send_control_command as send_power_control_command
+from tools.core.polaris_config import read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, parse_prefixed_timestamp, queue_command, read_lines_between, workspace_root
 from tools.probe.polaris_state_probe import diff_states, snapshot
 
@@ -842,6 +845,7 @@ def wait_for_regex_line(
 
 
 def run_low_latency_playback(audio_file: Path, device_key: str, execution_dir: Path, log_prefix: str) -> subprocess.CompletedProcess:
+    device_key = str(device_key or "").strip()
     normalized_wav = execution_dir / f"{log_prefix}_normalized.wav"
     ffmpeg_cmd = [
         "ffmpeg",
@@ -879,11 +883,10 @@ def run_low_latency_playback(audio_file: Path, device_key: str, execution_dir: P
         "internal-play-once",
         "--platform",
         "windows",
-        "--device-key",
-        device_key,
-        "--audio-file",
-        str(normalized_wav),
     ]
+    if device_key:
+        cmd.extend(["--device-key", device_key])
+    cmd.extend(["--audio-file", str(normalized_wav)])
     completed = subprocess.run(
         cmd,
         cwd=str(workspace_root()),
@@ -896,7 +899,16 @@ def run_low_latency_playback(audio_file: Path, device_key: str, execution_dir: P
     (execution_dir / f"{log_prefix}_stdout.log").write_text(completed.stdout, encoding="utf-8")
     (execution_dir / f"{log_prefix}_stderr.log").write_text(completed.stderr, encoding="utf-8")
     (execution_dir / f"{log_prefix}_command.json").write_text(
-        json.dumps({"cmd": cmd, "returncode": completed.returncode}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "cmd": cmd,
+                "returncode": completed.returncode,
+                "device_key": device_key,
+                "playback_device": playback_device_label(device_key),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return completed
@@ -2808,6 +2820,8 @@ def execute_standard_audio_case(case, rules: dict, execution_dir: Path, device_k
             "audio_file": str(audio_file) if audio_file else "",
             "manifest": audio_manifest,
             "returncode": playback_result["returncode"],
+            "device_key": str(device_key or "").strip(),
+            "playback_device": playback_device_label(device_key),
             "commands": commands,
             "segments": playback_result.get("segments", []),
         },
@@ -7895,7 +7909,7 @@ def run_doc_case(case_id: str, device_key: str = "") -> Path:
         shutil.copy2(default_doc_xlsx(), execution_dir / "doc_cases.xlsx")
         (execution_dir / "doc_case.json").write_text(json.dumps(case.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
-        resolved_device_key = device_key or json.loads((workspace_root() / "config" / "polaris_env.json").read_text(encoding="utf-8"))["default_playback_device_key"]
+        resolved_device_key = str(device_key or default_playback_device_key(read_env_config())).strip()
         if rules["runner_kind"] == "dialog_phase_case" and case.level3 == MODE_OFFLINE:
             return run_offline_dialog_phase_case(
                 case=case,

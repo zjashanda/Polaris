@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Dict, List
 
 from tools.audio.polaris_audio_builder import build_sequence
-from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports
-from tools.execution.polaris_case_runner import run_playback, sanitize_logs, summarize_window
+from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports, read_env_config
+from tools.execution.polaris_case_runner import default_playback_device_key, playback_device_label, run_playback, sanitize_logs, summarize_window
 from tools.execution.polaris_doc_case_runner import collect_metrics
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, read_lines_between, workspace_root
 
@@ -96,9 +96,7 @@ def build_step_summary(step_payload: dict) -> str:
 
 def run_probe(texts: List[str], device_key: str, observe_ms: int, label: str) -> Path:
     session_dir = current_session_dir()
-    env_path = workspace_root() / "config" / "polaris_env.json"
-    if not device_key:
-        device_key = json.loads(env_path.read_text(encoding="utf-8"))["default_playback_device_key"]
+    device_key = str(device_key or default_playback_device_key(read_env_config())).strip()
 
     lock_path = session_dir / ".case_runner.lock"
     lock_fd = None
@@ -160,6 +158,7 @@ def run_probe(texts: List[str], device_key: str, observe_ms: int, label: str) ->
         summary = {
             "label": label,
             "device_key": device_key,
+            "playback_device": playback_device_label(device_key),
             "observe_ms": observe_ms,
             "configured_log_ports": configured_log_ports(),
             "execution_dir": str(execution_dir),

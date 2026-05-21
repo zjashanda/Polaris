@@ -158,7 +158,7 @@ def build_action_registry(draft: Dict[str, Any]) -> Dict[str, Any]:
     actions["actions"].update({
         "action.load_local_polaris_config": {
             "type": "python",
-            "entrypoint": "load config/polaris_env.json and config/polaris_local_ports.json",
+            "entrypoint": "load polaris.local.json, fallback to config/polaris_env.json/config/polaris_local_ports.json",
             "side_effects": false_like(False)
         },
         "action.verify_audio_device": {
@@ -333,4 +333,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

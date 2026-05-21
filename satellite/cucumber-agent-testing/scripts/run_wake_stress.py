@@ -34,10 +34,11 @@ from run_cucumber import (  # noqa: E402
     start_managed_session,
     stop_managed_session,
 )
+from polaris_env import load_default_env  # noqa: E402
 from tools.audio.polaris_audio_builder import build_sequence  # noqa: E402
 from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports  # noqa: E402
 from tools.core.polaris_runtime import latest_heartbeat, parse_prefixed_timestamp, read_lines_between  # noqa: E402
-from tools.execution.polaris_case_runner import run_playback, sanitize_logs, summarize_window  # noqa: E402
+from tools.execution.polaris_case_runner import default_playback_device_key, playback_device_label, run_playback, sanitize_logs, summarize_window  # noqa: E402
 from tools.execution.polaris_doc_case_runner import collect_metrics  # noqa: E402
 from tools.probe.polaris_phrase_probe import build_key_lines  # noqa: E402
 
@@ -118,10 +119,8 @@ def tomorrow_0830() -> datetime:
 
 
 def load_env() -> Dict[str, Any]:
-    path = WORKSPACE_ROOT / "config" / "polaris_env.json"
-    if not path.exists():
-        return {}
-    return read_json(path)
+    _path, payload = load_default_env(WORKSPACE_ROOT)
+    return payload
 
 
 def jsonable_args(args: argparse.Namespace) -> Dict[str, Any]:
@@ -273,8 +272,9 @@ class StressRun:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.env = load_env()
-        self.wake_word = args.wake_word or str(self.env.get("current_wakeup_word") or "小美小美")
-        self.device_key = args.device_key or str(self.env.get("default_playback_device_key") or "")
+        device_cfg = self.env.get("device", {}) if isinstance(self.env.get("device"), dict) else {}
+        self.wake_word = args.wake_word or str(self.env.get("current_wakeup_word") or device_cfg.get("wake_word") or "小美小美")
+        self.device_key = str(args.device_key or default_playback_device_key(self.env)).strip()
         self.end_at = args.end_at or tomorrow_0830()
         self.run_dir = (Path(args.run_dir) if args.run_dir else BDD_ROOT / "debug" / "stress" / f"{stamp()}_wake_stress").resolve()
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -330,6 +330,7 @@ class StressRun:
             "end_at": self.end_at.isoformat(timespec="seconds"),
             "wake_word": self.wake_word,
             "device_key": self.device_key,
+            "playback_device": playback_device_label(self.device_key),
             "scenarios": [
                 {
                     "scenario_id": "first_wake_rate",
@@ -394,6 +395,7 @@ class StressRun:
             "end_at": self.end_at.isoformat(timespec="seconds"),
             "wake_word": self.wake_word,
             "device_key": self.device_key,
+            "playback_device": playback_device_label(self.device_key),
             "wake_audio_duration_ms": self.wake_audio_duration_ms,
             "round_total": len(self.rows),
             "scenarios": scenario_payloads,
@@ -415,7 +417,7 @@ class StressRun:
             f"- 运行目录：`{payload['run_dir']}`",
             f"- 截止时间：`{payload['end_at']}`",
             f"- 唤醒词：`{payload['wake_word']}`",
-            f"- 声卡：`{payload['device_key']}`",
+            f"- 声卡：`{payload.get('playback_device') or payload['device_key']}`",
             f"- 唤醒音频时长：`{payload['wake_audio_duration_ms']}ms`",
             f"- 总轮次：`{payload['round_total']}`",
             "",

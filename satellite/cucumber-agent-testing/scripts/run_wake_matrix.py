@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Run small Cucumber-style wake matrices for latency/continuous/random items.
 
@@ -32,6 +32,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from run_cucumber import start_managed_session, stop_managed_session  # noqa: E402
+from polaris_env import load_default_env  # noqa: E402
 from run_wake_stress import (  # noqa: E402
     asr_wake_count,
     classify_wake_round,
@@ -44,7 +45,7 @@ from tools.core.polaris_runtime import parse_prefixed_timestamp  # noqa: E402
 from tools.execution.polaris_case_runner import run_playback  # noqa: E402
 
 
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 WAKE_PATTERNS = {
     "cp": re.compile(r"\bWAKE\(1\)", re.I),
@@ -73,16 +74,14 @@ def default_output_dir(scenario: str) -> Path:
 
 
 def load_env_defaults() -> Dict[str, str]:
-    env_path = WORKSPACE_ROOT / "config" / "polaris_env.json"
-    if not env_path.exists():
-        return {}
-    try:
-        payload = json.loads(env_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    _env_path, payload = load_default_env(WORKSPACE_ROOT)
     return {
-        "wake_word": str(payload.get("current_wakeup_word") or DEFAULT_WAKE_WORD),
-        "device_key": str(payload.get("default_playback_device_key") or DEFAULT_DEVICE_KEY),
+        "wake_word": str(payload.get("current_wakeup_word") or payload.get("device", {}).get("wake_word") or DEFAULT_WAKE_WORD),
+        "device_key": str(
+            payload.get("default_playback_device_key")
+            or payload.get("audio", {}).get("default_playback_device_key")
+            or DEFAULT_DEVICE_KEY
+        ),
     }
 
 
@@ -554,3 +553,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

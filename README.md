@@ -8,11 +8,11 @@ Polaris 当前新增了一套可开源上手的 BDD + Agent Testing 入口，位
 satellite/cucumber-agent-testing/
 ```
 
-首次 clone 后，先复制本机配置模板，再 dry-run 验证任务入口：
+首次 clone 后，新用户只需要复制并编辑根目录这一个本机配置文件：
 
 ```powershell
-Copy-Item satellite\cucumber-agent-testing\configs\polaris_env.example.json config\polaris_env.json
-notepad config\polaris_env.json
+Copy-Item polaris.local.example.json polaris.local.json
+notepad polaris.local.json
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json
 ```
 
@@ -22,108 +22,82 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode execute --allow-side-effects --manage-session
 ```
 
+默认配置查找顺序：命令行 `--env-file` > 任务文件 `environment.env_file` > 根目录 `polaris.local.json` > 旧版 `config/polaris_env.json`。
+
 详细说明见：
 
+- `polaris.local.example.json`
 - `satellite/cucumber-agent-testing/README.md`
 - `satellite/cucumber-agent-testing/docs/configuration.md`
-- `satellite/cucumber-agent-testing/configs/polaris_env.example.json`
 - `satellite/cucumber-agent-testing/tasks/examples/`
+
+## 新项目必须先配什么
+
+以后按项目在 `polaris.local.json` 里分类维护，不再让新人到 `config/` 里找配置。只改这些基础字段：
+
+- `active_project`：选择当前项目，例如 `cskwb01` 或 `venusws63`。
+- `projects.<项目>.serial`：串口、波特率、拓扑；WS63 的 `cp` 必须留空。
+- `common.audio.default_playback_device_key`：声卡 key；项目/设备没有单独配置或留空时，脚本会走电脑默认播放声卡。
+- `common.device.wake_word/wakeup_id`：唤醒词和唤醒 ID。
+- `projects.<项目>.network`：Wi-Fi/热点配置；不需要联网编排时可留空或关闭。
+- `projects.<项目>.cloud`：API 环境；执行云控前设备端环境必须和这里一致。
+- `projects.<项目>.serial.control_preconditions`：声卡播放成功但设备无唤醒时的控制口前置，例如 `uut-pa.on`、`pa-enable.set 0 17 0 1`。
+
+WB01 与 WS63 当前模板已经放在同一个根配置里：
+
+- WB01/CSK：`projects.cskwb01`，需要 `ap/cp/asr/control` 4 个串口；本次已沉淀 PA/声卡链路恢复前置。
+- WS63/AP+WiFi：`projects.venusws63`，需要 `ap/upper/control` 3 个串口，`cp` 留空，PA 前置命令走控制口。
+
+`device.iot_id` / `cloud.device_id` 默认可以留空；只有执行 API/云控且脚本无法通过 `deviceinfo` 自动读取时，才需要手动填写。
+
+声卡建议优先填写稳定 key，便于多声卡机器复现；如果某个项目或设备没有单独声卡配置，就把 `audio.default_playback_device_key` 留空或删除，`listenai-play` 会使用电脑当前默认输出设备。此时若播放命令成功但设备无唤醒，要额外确认 Windows 默认声卡是否确实接到 DUT。
+
+## config/ 目录现在怎么定位
+
+`config/` 里不是每个文件都要手改，之前历史沉淀把本机配置、运行状态、报告和参考资料混在了一起，所以看起来乱。现在约定如下：
+
+- 用户入口：只改根目录 `polaris.local.json`。
+- 旧版兼容：`config/polaris_env.json`、`config/polaris_local_ports.json` 只给老脚本兜底，不作为新人入口。
+- 运行状态/报告：`polaris_doc_case_status.json`、`polaris_auto_executable_case_detail.md`、`polaris_fail_case_detail.md`、`polaris_failure_diagnosis.json` 等是生成或同步结果。
+- 参考资料：`polaris_command_catalog.*`、`polaris_validation_reference.md`、`polaris_model_applicability.md` 等是知识库/报告，不是串口配置。
+
+后续我不会直接删除这些文件，先把入口收敛清楚；等确认没有老脚本依赖后，再把历史/生成类文件迁到更明确的目录。
+
+## API 环境注意事项
+
+调用云端/API 前，设备端 CSK/AP 必须先切到和 API 一致的调试环境，否则容易出现接口成功但设备不生效、connector/channel 异常或控制错环境。
+
+- UAT：在 CSK/AP 串口执行 `flash.set.int env@1`，再执行 `reboot`。
+- SIT：在 CSK/AP 串口执行 `flash.set.int env@2`，再执行 `reboot`。
+- PRO：在 CSK/AP 串口执行 `flash.set.int env@0`，再执行 `reboot`。
+- `polaris.local.json` 中 `cloud.api_environment` 必须和设备端 `cloud.device_env` 一致，例如都为 `uat` 或都为 `sit`。
+- 重启后先确认设备在线，再执行 `set-volume`、`set-full-duplex`、`set-night-mode` 等 API 类用例。
 
 ## 原有 skill 说明
 
 用于在本仓库中验证 Polaris 系列美的空调语音设备，覆盖串口日志、COM15 电源控制、热点编排、短语探测、已验证正常的云端控制、文档用例执行与报告同步。
 
-## Skill layout
+## 目录结构
 
-- `.gitignore`
-- `capabilities-and-usage.md`
-- `config/polaris_auto_executable_case_detail.md`
-- `config/polaris_command_catalog.json`
-- `config/polaris_command_catalog.md`
-- `config/polaris_command_word_report.md`
-- `config/polaris_doc_case_status.json`
-- `config/polaris_env.json`
-- `config/polaris_fail_case_detail.md`
-- `config/polaris_failure_diagnosis.json`
-- `config/polaris_learncase_deep_relation.md`
-- `config/polaris_learncase_feedback.md`
-- `config/polaris_local_ports.json`
-- `config/polaris_model_applicability.md`
-- `config/polaris_validation_reference.md`
-- `doc/__init__.py`
-- `doc/api/__init__.py`
-- `doc/api/common_request.py`
-- `doc/cases/20260130141231_lyzuo-美的空调-功能测试用例（全）.xlsx`
-- `doc/cases/FA2新增命令词测试用例.xlsx`
-- `doc/fa2命令词.txt`
-- `doc/reference/tone.h`
-- `doc/reference/美的空调相关特殊操作说明文档.docx`
-- `doc/reference/自动化测试优化方案.pdf`
-- `doc/requirements/20241128105427_功能测试用例.xlsx`
-- `doc/requirements/美的FA2挂机需求文档_20250818.xlsx`
-- `doc/requirements/美的FA2柜机需求文档_20250818.xlsx`
-- `environment-and-migration.md`
-- `references/evidence-rules.md`
-- `references/fullflow-validation-method.md`
-- `references/modular-validation-workflow.md`
-- `references/project-profiles/polaris_midea_ac.json`
-- `references/validation-pool/ac-control-command.md`
-- `references/validation-pool/cloud-control-settings.md`
-- `references/validation-pool/duplex-mode.md`
-- `references/validation-pool/fault-convergence.md`
-- `references/validation-pool/INDEX.md`
-- `references/validation-pool/network-online.md`
-- `references/validation-pool/night-mode.md`
-- `references/validation-pool/online-offline-asr.md`
-- `references/validation-pool/schema.md`
-- `references/validation-pool/volume-level.md`
-- `references/validation-pool/wake-session.md`
-- `SKILL.md`
-- `spec/cases/offline_oneshot_open_ac_fast_gap.yaml`
-- `spec/cases/offline_wakeup.yaml`
-- `spec/cases/offline_wakeup_open_ac.yaml`
-- `spec/suites/offline_smoke.yaml`
-- `tools/__init__.py`
-- `tools/audio/__init__.py`
-- `tools/audio/polaris_audio_builder.py`
-- `tools/audio/tts_sync_legacy/run.bat`
-- `tools/audio/tts_sync_legacy/tts.txt`
-- `tools/audio/tts_sync_legacy/tts_synthesis.py`
-- `tools/cloud/__init__.py`
-- `tools/cloud/polaris_app_control.py`
-- `tools/core/__init__.py`
-- `tools/core/polaris_config.py`
-- `tools/core/polaris_runtime.py`
-- `tools/device/__init__.py`
-- `tools/device/polaris_network_orchestrator.py`
-- `tools/device/polaris_power_control.py`
-- `tools/device/polaris_serial_harness.py`
-- `tools/execution/__init__.py`
-- `tools/execution/polaris_batch_runner.py`
-- `tools/execution/polaris_case_runner.py`
-- `tools/execution/polaris_doc_case_batch_runner.py`
-- `tools/execution/polaris_doc_case_runner.py`
-- `tools/execution/polaris_followup_queue.py`
-- `tools/library/__init__.py`
-- `tools/library/polaris_doc_case_lib.py`
-- `tools/pool/polaris_validation_pool.py`
-- `tools/probe/__init__.py`
-- `tools/probe/polaris_phrase_probe.py`
-- `tools/probe/polaris_state_probe.py`
-- `tools/reporting/__init__.py`
-- `tools/reporting/build_auto_executable_cases_xlsx.mjs`
-- `tools/reporting/export_auto_case_detail_md.py`
-- `tools/reporting/export_fail_case_detail_md.py`
-- `tools/reporting/polaris_doc_case_audit.py`
-- `tools/reporting/polaris_export_case_table.py`
-- `tools/reporting/polaris_refresh_failure_diagnosis.py`
-- `tools/reporting/polaris_status_sync.py`
-- `tools/suite/run_polaris_formal_suite.py`
-- `tools/validation/__init__.py`
-- `tools/validation/polaris_ac_control_command_probe.py`
-- `tools/validation/polaris_command_validator.py`
-- `tools/validation/polaris_fa2_command_batch.py`
-- `tools/validation/polaris_workbook_voice_recognition_batch.py`
+根目录只保留启动必须看的入口文件和稳定模块；历史运行证据已归档到 `_runtime/archive/<时间戳>/`。
+
+```text
+README.md                         # 新人入口
+SKILL.md                          # Codex skill 规则与能力说明
+polaris.local.example.json         # 本机配置模板，可提交
+polaris.local.json                 # 本机真实配置，已忽略提交
+config/                            # 旧版兼容配置 + 状态/报告，不作为新人入口
+doc/                               # 产品需求、词表、测试表格等原始资料
+docs/skill/                        # 使用说明、环境迁移说明
+references/                        # 验证规则、功能池、项目 profile
+tools/                             # 底层串口/音频/云控/报告脚本
+satellite/cucumber-agent-testing/  # Cucumber/BDD 测试框架
+spec/                              # 旧版离线 smoke spec
+result/cache/outputs/              # 运行输出根目录，默认只保留 .gitkeep
+_runtime/archive/                  # 整理迁出的历史运行文件，不提交
+```
+
+原则：新用户先看 `README.md`、`polaris.local.example.json`、`satellite/cucumber-agent-testing/README.md`；不要直接改 `config/` 里的状态报告。
 
 ## Install the skill
 
@@ -137,7 +111,7 @@ Then restart Codex.
 
 ## Usage and workflow
 
-本文档统一使用 UTF-8 编码，作为当前仓库根目录下的本地 skill 使用。后续迁移到新机器时，直接复制根目录这 3 份文档即可，不需要安装到 `.codex/skills`。
+本文档统一使用 UTF-8 编码，作为当前仓库根目录下的本地 skill 使用。后续迁移到新机器时，保留 `README.md`、`SKILL.md`、`polaris.local.example.json` 和 `docs/skill/` 下说明文档即可。
 
 ## 这个 skill 当前保留什么能力
 
@@ -178,9 +152,9 @@ Then restart Codex.
 
 ## 建议使用顺序
 
-1. 先读 `environment-and-migration.md`
+1. 先读 `docs/skill/environment-and-migration.md`
    - 确认主机、串口、播放设备、热点、云环境是否满足要求。
-2. 再读 `capabilities-and-usage.md`
+2. 再读 `docs/skill/capabilities-and-usage.md`
    - 按“基础设施 → 云控 → 用例 → 报告”的顺序选择入口。
 3. 真正执行前，至少确认以下 4 件事：
    - `.current_result_dir` 指向当前 session
@@ -190,18 +164,17 @@ Then restart Codex.
 
 ## 本地串口配置
 
-当前本机串口映射写入 `config/polaris_local_ports.json`。工具命令未显式指定串口时，默认读取该配置；显式指定串口时，会同步对应角色到该配置文件。
+现在以根目录 `polaris.local.json` 为主配置入口。工具命令未显式指定串口时，优先读取 `polaris.local.json` 当前 `active_project` 的串口；旧版 `config/polaris_local_ports.json` 只作为兼容缓存。
 
-当前角色：
+当前内置项目：
 
-- `ap / cskap`：`COM14`
-- `cp / cskcp`：`COM12`
-- `asr`：`COM13`
-- `control`：`COM15`
+- `cskwb01`：`ap/cp/asr/control` 4 个串口，默认 `COM14/COM12/COM13/COM15`。
+- `venusws63`：`ap/upper/control` 3 个串口，默认 `COM14/COM13/COM15`，`cp` 留空。
 
 常用示例：
 
 ```powershell
+notepad polaris.local.json
 python tools/core/polaris_config.py show
 python tools/core/polaris_config.py set --role control --port COM15
 python tools/device/polaris_serial_harness.py send --role ap --command version
@@ -209,7 +182,7 @@ python tools/device/polaris_serial_harness.py send --role asr --command "listen 
 python tools/device/polaris_power_control.py cycle --target asr
 ```
 
-兼容说明：旧工具中仍写死的 `COM12/COM13/COM14` 会在运行时按角色映射到本地配置里的 `cp/asr/ap` 端口，避免换机器后逐个改脚本。
+兼容说明：旧工具中仍写死的 `COM12/COM13/COM14` 会在运行时按角色映射到本地配置里的 `cp/asr/ap` 端口。WS63 这类无 CP 项目会跳过空的 `cp` 端口。
 
 注意：串口 logger 启动时读取一次配置；如果运行中修改了 COM 映射，需要重启 logger 才能让采集线程切到新端口。
 
@@ -257,12 +230,12 @@ python tools/device/polaris_power_control.py cycle --target asr
 
 ## 按需查看的参考文档
 
-- `capabilities-and-usage.md`
+- `docs/skill/capabilities-and-usage.md`
   - 当前保留能力
   - 常用命令
   - 本轮已验证结果
   - 当前边界与排除项
-- `environment-and-migration.md`
+- `docs/skill/environment-and-migration.md`
   - 环境要求
   - 新设备 bootstrap
   - 换机迁移前要改什么

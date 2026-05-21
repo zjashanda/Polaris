@@ -15,7 +15,7 @@
     "mapping": "satellite/cucumber-agent-testing/references/voice_core_mapping.json"
   },
   "environment": {
-    "env_file": "config/polaris_env.json"
+    "env_file": "polaris.local.json"
   },
   "preconditions": [
     "设备需要处于什么状态",
@@ -52,3 +52,4 @@
     "requirement_review": "什么情况下说明需求口径或 oracle 不清楚"
   }
 }
+

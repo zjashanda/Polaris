@@ -27,8 +27,8 @@
     ],
     "required_any_files": [
       "SKILL.md",
-      "capabilities-and-usage.md",
-      "environment-and-migration.md"
+      "docs/skill/capabilities-and-usage.md",
+      "docs/skill/environment-and-migration.md"
     ],
     "tool_keywords": [
       "polaris_phrase_probe.py",

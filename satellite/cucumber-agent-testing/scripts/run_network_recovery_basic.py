@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Run a basic offline -> online recovery validation.
 
 The script intentionally keeps all artifacts in the Cucumber debug run and
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 BASE = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 DEFAULT_QUERY = "今天天气怎么样"
 
@@ -351,3 +351,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

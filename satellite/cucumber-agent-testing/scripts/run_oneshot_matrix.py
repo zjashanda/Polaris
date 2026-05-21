@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Run a wake+command one-shot interval matrix.
 
 Each interval is executed as an independent FA2 wake+command batch so the
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 BASE = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DEVICE_KEY = "VID_8765&PID_5678:9_2A847557_7_0000"
+DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 DEFAULT_COMMAND = "打开空调"
 
@@ -276,3 +276,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

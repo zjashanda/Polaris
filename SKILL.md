@@ -1,11 +1,11 @@
----
+﻿---
 name: polaris-device-validation
 description: 用于在本仓库中验证 Polaris 系列美的空调语音设备，覆盖串口日志、COM15 电源控制、热点编排、短语探测、已验证正常的云端控制、文档用例执行与报告同步。
 ---
 
 # Polaris 设备验证技能
 
-本文档统一使用 UTF-8 编码，作为当前仓库根目录下的本地 skill 使用。后续迁移到新机器时，直接复制根目录这 3 份文档即可，不需要安装到 `.codex/skills`。
+本文档统一使用 UTF-8 编码，作为当前仓库根目录下的本地 skill 使用。后续迁移到新机器时，保留 `README.md`、`SKILL.md`、`polaris.local.example.json` 和 `docs/skill/` 下说明文档即可。
 
 ## 这个 skill 当前保留什么能力
 
@@ -46,9 +46,9 @@ description: 用于在本仓库中验证 Polaris 系列美的空调语音设备�
 
 ## 建议使用顺序
 
-1. 先读 `environment-and-migration.md`
+1. 先读 `docs/skill/environment-and-migration.md`
    - 确认主机、串口、播放设备、热点、云环境是否满足要求。
-2. 再读 `capabilities-and-usage.md`
+2. 再读 `docs/skill/capabilities-and-usage.md`
    - 按“基础设施 → 云控 → 用例 → 报告”的顺序选择入口。
 3. 真正执行前，至少确认以下 4 件事：
    - `.current_result_dir` 指向当前 session
@@ -58,18 +58,22 @@ description: 用于在本仓库中验证 Polaris 系列美的空调语音设备�
 
 ## 本地串口配置
 
-当前本机串口映射写入 `config/polaris_local_ports.json`。工具命令未显式指定串口时，默认读取该配置；显式指定串口时，会同步对应角色到该配置文件。
+当前优先使用根目录 `polaris.local.json` 作为本机基础配置入口，只记录项目、串口、声卡、Wi-Fi、唤醒词和云环境。`config/polaris_local_ports.json` 仍保留为旧工具兼容缓存，不再作为新人主入口。
 
-当前角色：
+声卡配置规则：优先使用项目/设备配置里的 `audio.default_playback_device_key`；如果没有写或留空，播放脚本必须省略 `--device-key`，让 `listenai-play` 使用电脑默认播放声卡。多声卡机器建议填写稳定 key，避免默认设备被系统切换导致误判。
 
-- `ap / cskap`：`COM14`
-- `cp / cskcp`：`COM12`
-- `asr`：`COM13`
-- `control`：`COM15`
+当声卡播放返回 `0` 但设备没有任何唤醒证据时，先按 PA/声卡链路排查，不直接判固件失败。WB01/WS63 类项目可在控制口执行 `uut-pa.on` 和 `pa-enable.set 0 17 0 1` 后复播唤醒词；命令必须发到 `control` 串口。
+
+当前内置项目：
+
+- `cskwb01`：`ap / cp / asr / control` 4 个串口，默认 `COM14 / COM12 / COM13 / COM15`。
+- `venusws63`：`ap / upper(asr) / control` 3 个串口，默认 `COM14 / COM13 / COM15`，`cp` 留空。
 
 常用示例：
 
 ```powershell
+Copy-Item polaris.local.example.json polaris.local.json
+notepad polaris.local.json
 python tools/core/polaris_config.py show
 python tools/core/polaris_config.py set --role control --port COM15
 python tools/device/polaris_serial_harness.py send --role ap --command version
@@ -77,7 +81,7 @@ python tools/device/polaris_serial_harness.py send --role asr --command "listen 
 python tools/device/polaris_power_control.py cycle --target asr
 ```
 
-兼容说明：旧工具中仍写死的 `COM12/COM13/COM14` 会在运行时按角色映射到本地配置里的 `cp/asr/ap` 端口，避免换机器后逐个改脚本。
+兼容说明：旧工具中仍写死的 `COM12/COM13/COM14` 会在运行时按角色映射到本地配置里的 `cp/asr/ap` 端口；无 CP 项目会跳过空 `cp` 端口。
 
 注意：串口 logger 启动时读取一次配置；如果运行中修改了 COM 映射，需要重启 logger 才能让采集线程切到新端口。
 
@@ -125,12 +129,12 @@ python tools/device/polaris_power_control.py cycle --target asr
 
 ## 按需查看的参考文档
 
-- `capabilities-and-usage.md`
+- `docs/skill/capabilities-and-usage.md`
   - 当前保留能力
   - 常用命令
   - 本轮已验证结果
   - 当前边界与排除项
-- `environment-and-migration.md`
+- `docs/skill/environment-and-migration.md`
   - 环境要求
   - 新设备 bootstrap
   - 换机迁移前要改什么
