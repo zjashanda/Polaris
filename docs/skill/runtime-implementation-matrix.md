@@ -37,7 +37,7 @@
 | State Assertion DSL-lite | 在 `runtime_state.json` 上执行状态断言、历史事件必选/任选、禁止事件 | `runtime/state_assertion_dsl.py`, `scripts/run_state_assertion_dsl.py` |
 | Validation IR MVP | task + env + resource + constraint + adapter + capability 编译为 `polaris.validation_ir.v1` | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
 | Analytics Trend MVP | 扫描 `execution_record.json`，按 day/project/task 聚合 result/stability 趋势 | `runtime/analytics_trend.py`, `scripts/build_analytics_trend.py` |
-| Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `scripts/run_adapter_action.py` |
+| Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `runtime/device_adapter.py`, `scripts/run_adapter_action.py` |
 | Validation Kernel Lifecycle MVP | compile_ir、preflight、adapter/capability/resource/constraint 快照、可选 run_optimized_task、kernel_record/lifecycle；真机 replay 存在时自动生成 event graph、state assertions、Replay VM-lite snapshot | `runtime/validation_kernel.py`, `scripts/run_validation_kernel.py` |
 | Kernel Scene Scheduler MVP | scene 每个节点走独立 Kernel 生命周期，输出 scene 级记录和节点级 kernel_record | `scripts/run_kernel_scene.py` |
 | 默认状态断言策略 | 按 runtime profile 自动追加 WakeDetected、ASR/Command、媒体响应、禁止 Crash/Reboot/误唤醒等兜底断言 | `references/optimization/state_assertion_policy.json` |
@@ -50,7 +50,7 @@
 | Event Graph | 已有本地因果图 MVP，已覆盖媒体响应、媒体完成、打断、网络恢复、重启/崩溃前因和风险摘要 | 事件因果仍是启发式，尚未覆盖所有项目私有云端协议链路 |
 | Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率和 State Assertion DSL-lite | 尚未实现完整层级状态树和状态覆盖率阈值策略 |
 | Capability Runtime | 已有项目能力矩阵 MVP，已显式列出音频回采、媒体响应 oracle、云控配置权限、boot reason oracle 缺口 | codec、真实出声质量评分、具体云 API token 权限校验仍需项目资料或实机接口 |
-| Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP | 现有 tools 尚未完全改造成统一 adapter execute interface |
+| Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP，常用串口/声卡/网络/云控动作可统一 dry-run 规划 | 现有长流程 runner 尚未全部改为只经 adapter execute interface 调用 |
 | IR Compiler | 已有 Validation IR MVP | 尚未把 feature/task/agent/scene 全入口统一到一个最终 IR schema |
 | Validation DSL Compiler | 已有 Assertion DSL-lite 和 State Assertion DSL-lite，可表达常见事件存在、窗口、序列、响应、持续时长、状态禁止 | 尚未替代 Python profile 断言，也未形成完整自然语言 DSL 编译器 |
 | Analytics Pipeline | 已有本地 trend MVP | 尚未流式化，也未接长期指标库/看板 |
@@ -149,3 +149,11 @@
 | WB01 first_wake replay | `nodes=25`、`edges=38`、`warnings=0`，新增 `media_started_to_completed` / `asr_to_media_response` 等关系和 `risk_summary` |
 | WS63 first_wake replay | `nodes=34`、`edges=48`、`warnings=0`，新增 `asr_to_tts_response`、网络 loss 计数和媒体响应关系 |
 | 合成打断/重启 smoke | 可推导 `media_interrupted`、`interrupt_injected_to_completed`、`interrupt_to_recognition`、`possible_reboot_after_activity` |
+
+## 2026-05-26 Adapter Executor 覆盖验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Adapter Registry | WB01 `adapters=7/actions=25/warnings=0`；WS63 `adapters=7/actions=21/warnings=2` |
+| Control actions | `pa_on`、`power_on` dry-run 均 PLAN_OK，命令渲染到控制口 |
+| Env/Cloud/Network/Audio actions | `serial.ap/set_device_env`、`cloud.api/set_volume`、`network.local/hotspot_status`、`audio.playback/play` dry-run 均 PLAN_OK |

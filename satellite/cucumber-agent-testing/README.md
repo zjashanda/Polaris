@@ -261,6 +261,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `build_event_graph.py` 已输出 `risk_summary`，并补充媒体、云端响应、打断、重启/崩溃因果边。在线压测后分析异常时，优先看 `possible_reboot_after_activity`、`possible_crash_after_activity`、`media_interrupted`、`interrupt_to_recognition`、`media_started_to_completed` 等关系。
 
+`run_adapter_action.py` 默认 dry-run，不会真实占用串口/声卡/云端。当前 registry 已覆盖控制口 PA/上下电、AP 设备环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行必须显式追加 `--execute --allow-side-effects`。
+
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 
 ## 新功能怎么接入

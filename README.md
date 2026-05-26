@@ -474,7 +474,7 @@ scripts/run_state_assertion_dsl.py  # runtime_state -> state assertions
 scripts/compile_validation_ir.py    # task + env -> Validation IR
 scripts/run_validation_kernel.py    # task + env -> Kernel lifecycle record
 scripts/run_kernel_scene.py         # scene graph -> per-node Kernel lifecycle record
-scripts/run_adapter_action.py       # adapter registry action -> command plan/execute
+scripts/run_adapter_action.py       # adapter registry action -> command plan/execute，默认 dry-run
 scripts/build_analytics_trend.py    # execution_record history -> local trend report
 docs/skill/runtime-implementation-matrix.md
 ```

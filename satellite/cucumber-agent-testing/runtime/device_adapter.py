@@ -138,8 +138,31 @@ def build_adapter_registry(env_payload: Dict[str, Any]) -> AdapterRegistry:
         _serial_adapter("cp", _text(ports.get("cp")), baudrate, writable=False),
         _serial_adapter("asr", _text(ports.get("asr") or ports.get("upper")), baudrate, writable=True),
     ]
+    device_env_command = _text(_nested(env_payload, "cloud", "device_env_command"))
+    if _text(ports.get("ap")) and device_env_command:
+        adapters[0].actions.append(
+            AdapterAction(
+                name="set_device_env",
+                kind="serial_config",
+                command_template=[
+                    "python",
+                    "tools/device/polaris_serial_harness.py",
+                    "send",
+                    "--role",
+                    "ap",
+                    "--command",
+                    device_env_command,
+                ],
+                side_effect=True,
+                resources=[f"serial:{_text(ports.get('ap'))}"],
+                notes=["API/云控前先确认设备端环境与 cloud.api_environment 一致。"],
+            )
+        )
+        adapters[0].capabilities.append("device_env_write")
 
     control_port = _text(ports.get("control"))
+    power_on_command = _text(_nested(env_payload, "serial", "power_on_command") or "uut-switch1.on")
+    power_off_command = _text(_nested(env_payload, "serial", "power_off_command") or "uut-switch1.off")
     control_actions = [
         AdapterAction(
             name="send_control",
@@ -160,6 +183,54 @@ def build_adapter_registry(env_payload: Dict[str, Any]) -> AdapterRegistry:
             notes=["PA and power-control commands must be sent through the control port."],
         )
     ]
+    for action_name, command, note in [
+        ("pa_on", "uut-pa.on", "打开 PA；声卡播放有声但设备无唤醒时优先尝试。"),
+        ("pa_persist", "pa-enable.set 0 17 0 1", "保存 PA 使能配置；必须发到控制口。"),
+        ("power_on", power_on_command, "项目上电控制命令，可通过 serial.power_on_command 覆盖。"),
+        ("power_off", power_off_command, "项目掉电控制命令，可通过 serial.power_off_command 覆盖。"),
+    ]:
+        if command:
+            control_actions.append(
+                AdapterAction(
+                    name=action_name,
+                    kind="serial_control",
+                    command_template=[
+                        "python",
+                        "tools/device/polaris_power_control.py",
+                        "send",
+                        "--port",
+                        control_port,
+                        "--baudrate",
+                        control_baudrate,
+                        "--command",
+                        command,
+                    ],
+                    side_effect=True,
+                    resources=[f"serial:{control_port}"] if control_port else [],
+                    notes=[note],
+                )
+            )
+    if control_port:
+        control_actions.append(
+            AdapterAction(
+                name="cycle_target",
+                kind="power_cycle",
+                command_template=[
+                    "python",
+                    "tools/device/polaris_power_control.py",
+                    "cycle",
+                    "--target",
+                    "{target}",
+                    "--port",
+                    control_port,
+                    "--baudrate",
+                    control_baudrate,
+                ],
+                side_effect=True,
+                resources=[f"serial:{control_port}"],
+                notes=["target 取 asr/wb01/csk；会真实上下电并采集窗口日志。"],
+            )
+        )
     adapters.append(
         DeviceAdapter(
             adapter_id="control.serial",
@@ -191,7 +262,7 @@ def build_adapter_registry(env_payload: Dict[str, Any]) -> AdapterRegistry:
                     kind="audio_playback",
                     command_template=[
                         "python",
-                        "listenai_play.py",
+                        r"C:\Users\Administrator\.codex\skills\listenai-play\scripts\listenai_play.py",
                         "play",
                         "--audio-file",
                         "{audio_file}",
@@ -200,6 +271,23 @@ def build_adapter_registry(env_payload: Dict[str, Any]) -> AdapterRegistry:
                     side_effect=True,
                     resources=[f"audio:{audio_key or 'DEFAULT_RENDER_DEVICE'}"],
                 )
+                ,
+                AdapterAction(
+                    name="play_repeat",
+                    kind="audio_playback",
+                    command_template=[
+                        "python",
+                        r"C:\Users\Administrator\.codex\skills\listenai-play\scripts\listenai_play.py",
+                        "play",
+                        "--audio-file",
+                        "{audio_file}",
+                        "--repeat",
+                        "{repeat}",
+                    ]
+                    + (["--device-key", audio_key] if audio_key else []),
+                    side_effect=True,
+                    resources=[f"audio:{audio_key or 'DEFAULT_RENDER_DEVICE'}"],
+                ),
             ],
             config={"device_key": audio_key or "DEFAULT_RENDER_DEVICE", "volume": _nested(env_payload, "audio", "playback_volume")},
         )
@@ -215,7 +303,35 @@ def build_adapter_registry(env_payload: Dict[str, Any]) -> AdapterRegistry:
             resources=["network:wifi"],
             capabilities=(["wifi_config"] if wifi_ssid else []) + (["hotspot_control"] if hotspot_enabled else []),
             actions=[
-                AdapterAction(name="hotspot_cycle", kind="network_control", side_effect=True, resources=["network:wifi"])
+                AdapterAction(
+                    name="hotspot_status",
+                    kind="network_query",
+                    command_template=["python", "tools/device/polaris_network_orchestrator.py", "hotspot-status"],
+                    side_effect=False,
+                    resources=["network:wifi"],
+                ),
+                AdapterAction(
+                    name="hotspot_cycle",
+                    kind="network_control",
+                    command_template=["python", "tools/device/polaris_network_orchestrator.py", "hotspot-cycle"],
+                    side_effect=True,
+                    resources=["network:wifi"],
+                ),
+                AdapterAction(
+                    name="ensure_online",
+                    kind="network_control",
+                    command_template=[
+                        "python",
+                        "tools/device/polaris_network_orchestrator.py",
+                        "ensure-online",
+                        "--ssid",
+                        "{ssid}",
+                        "--pwd",
+                        "{pwd}",
+                    ],
+                    side_effect=True,
+                    resources=["network:wifi"],
+                ),
             ]
             if hotspot_enabled
             else [],
@@ -234,8 +350,76 @@ def build_adapter_registry(env_payload: Dict[str, Any]) -> AdapterRegistry:
             resources=[f"cloud:{api_env or 'UNKNOWN'}"],
             capabilities=["cloud_api", "device_env_switch"] if api_env else [],
             actions=[
-                AdapterAction(name="set_device_env", kind="cloud_or_serial_config", side_effect=True, resources=[f"cloud:{api_env}"]),
-                AdapterAction(name="call_api", kind="cloud_api", side_effect=True, resources=[f"cloud:{api_env}"]),
+                AdapterAction(
+                    name="probe_device",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "probe-device"],
+                    side_effect=False,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="set_full_duplex",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "set-full-duplex", "--enable", "{enable}", "--timeout", "{timeout}"],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="set_volume",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "set-volume", "--value", "{value}"],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="set_multi_wakeup",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "set-multi-wakeup", "--enable", "{enable}"],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="set_night_mode",
+                    kind="cloud_api",
+                    command_template=[
+                        "python",
+                        "tools/cloud/polaris_app_control.py",
+                        "set-night-mode",
+                        "--enable",
+                        "{enable}",
+                        "--time-from",
+                        "{time_from}",
+                        "--time-to",
+                        "{time_to}",
+                        "--volume",
+                        "{volume}",
+                        "--awake-threshold",
+                        "{awake_threshold}",
+                    ],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="set_wakeup_word",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "set-wakeup-word", "--word", "{word}"],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="set_wakeup_threshold",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "set-wakeup-threshold", "--threshold", "{threshold}"],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
+                AdapterAction(
+                    name="proactive_interaction",
+                    kind="cloud_api",
+                    command_template=["python", "tools/cloud/polaris_app_control.py", "proactive-interaction", "--interrupt", "--tts-long"],
+                    side_effect=True,
+                    resources=[f"cloud:{api_env}"],
+                ),
             ]
             if api_env
             else [],

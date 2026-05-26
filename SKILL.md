@@ -90,5 +90,5 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - Kernel 生命周期入口走 `run_validation_kernel.py`；它会在 runner 后自动补齐 runtime replay 侧的 event graph、默认 state assertions 和 Replay VM-lite snapshot。
 - 状态稳定性不要只看最终 PASS/FAIL；必须结合 `runtime_state.json` 里的 `state_health`、`state_violations`、`coverage` 区分崩溃/重启、日志缺口、媒体顺序缺失和业务断言失败。
 - Event Graph 需要优先查看 `risk_summary` 和因果边：`command/asr_to_*_response`、`media_started_to_completed`、`media_interrupted`、`interrupt_to_recognition`、`possible_reboot/crash_after_activity`，用于分析在线媒体、打断和重启根因。
-- adapter 单动作规划/执行入口走 `run_adapter_action.py`，真执行副作用必须显式 `--execute --allow-side-effects`。
+- adapter 单动作规划/执行入口走 `run_adapter_action.py`，默认只 dry-run 渲染命令；真执行副作用必须显式 `--execute --allow-side-effects`。当前已覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置。
 - 首次唤醒时序不要直接拿播放进程启动当唯一锚点；如播放进程明显长于 wav 时长，优先按 `AudioCompleted - audio_duration_ms` 估算有效波形起点，无法估算才输出 `TIMING_AMBIGUOUS`。
