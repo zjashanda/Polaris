@@ -63,6 +63,7 @@
         "device_env": "sit",
         "device_env_command": "flash.set.int env@2",
         "device_env_reboot_required": true,
+        "capabilities": [],
         "device_id": ""
       },
       "notes": [
@@ -95,6 +96,7 @@
         "device_env": "uat",
         "device_env_command": "flash.set.int env@1",
         "device_env_reboot_required": true,
+        "capabilities": [],
         "device_id": ""
       },
       "notes": [

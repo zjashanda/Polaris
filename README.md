@@ -90,11 +90,13 @@ notepad polaris.local.json
 |---|---|
 | `active_project` | 当前连接的项目，例如 `cskwb01` 或 `venusws63`。 |
 | `common.audio.default_playback_device_key` | 指定声卡 key；留空则使用电脑默认声卡。 |
+| `common.audio.capture_device_key` / `loopback_device_key` | 可选；有音频回采时填写，用于证明“真的出声”和播放质量。 |
 | `common.device.wake_word` | 当前唤醒词，例如 `小美小美`。 |
 | `common.network.wifi_ssid/password` | 当前测试 Wi-Fi 或热点信息。 |
 | `projects.<项目>.serial.ports` | AP/CP/ASR/上位/控制口 COM 口。 |
 | `projects.<项目>.cloud.api_environment` | 云控环境，常见为 `uat` 或 `sit`。 |
 | `projects.<项目>.cloud.device_env_command` | 设备切换环境命令，必须发到设备支持的串口。 |
+| `projects.<项目>.cloud.capabilities` | 可选；声明云控权限，例如 `volume_control`、`night_mode`、`wake_word_config`、`wake_threshold`、`multi_wake`。 |
 
 ### 4.2 WB01 项目最小配置
 

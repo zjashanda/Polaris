@@ -257,6 +257,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `run_assertion_dsl.py` 已支持基础时序和业务链路 DSL：`EXPECT`、`FORBID`、`EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`。在线问答、音乐、新闻、相声等场景可先用它验证“识别后是否出现 TTS/Media 响应、响应是否在指定窗口内、播放持续是否达到阈值”，后续再把稳定规则沉淀进 profile 断言。
 
+`build_capability_matrix.py` 已把常见缺口拆细：音频回采 oracle、媒体日志响应 oracle、真实声学响应 oracle、云控权限、boot reason oracle。新项目只配串口和 Wi-Fi 后，先跑能力矩阵，就能看到哪些测试可直接执行、哪些需要补资料或补硬件。
+
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 
 ## 新功能怎么接入

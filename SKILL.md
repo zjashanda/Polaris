@@ -86,6 +86,7 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - Replay VM-lite、Simulation-lite、Assertion DSL-lite 分别走 `replay_vm.py`、`simulate_runtime.py`、`run_assertion_dsl.py`。
 - Assertion DSL-lite 已支持 `EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`，可表达 ASR/Command 到 TTS/Media 的响应链路和媒体持续时间；复杂业务仍优先固化到 Python profile 断言。
 - Adapter/Capability/IR/EventGraph/StateDSL/Trend 分别走 `inspect_device_adapters.py`、`build_capability_matrix.py`、`compile_validation_ir.py`、`build_event_graph.py`、`run_state_assertion_dsl.py`、`build_analytics_trend.py`。
+- 新项目接入时先看 `build_capability_matrix.py`，其中 `audio.loopback_oracle`、`media.acoustic_response_oracle`、云控权限和 `reboot.boot_reason_oracle` 为常见缺口；不要把“设备日志说播了”直接等同于“真实出声质量通过”。
 - Kernel 生命周期入口走 `run_validation_kernel.py`；它会在 runner 后自动补齐 runtime replay 侧的 event graph、默认 state assertions 和 Replay VM-lite snapshot。
 - 状态稳定性不要只看最终 PASS/FAIL；必须结合 `runtime_state.json` 里的 `state_health`、`state_violations`、`coverage` 区分崩溃/重启、日志缺口、媒体顺序缺失和业务断言失败。
 - adapter 单动作规划/执行入口走 `run_adapter_action.py`，真执行副作用必须显式 `--execute --allow-side-effects`。

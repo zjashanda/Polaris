@@ -32,7 +32,7 @@
 | 项目能力降级 | WS63 `cp` 留空时，BDD 与 Runtime 均按 AP/ASR 闭环判断；WB01 仍要求 CP/AP/ASR | `scripts/run_cucumber.py`, `runtime/capabilities.py`, `runtime/replay.py` |
 | 优化任务结果聚合 | `run_optimized_task.py` 优先按 scenario/runtime 聚合，不把 `status=DONE` 误判为 PASS | `scripts/run_optimized_task.py` |
 | Device Adapter Interface MVP | serial/audio/control/network/cloud adapter registry，不替换 tools，先统一描述能力、资源和动作 | `runtime/device_adapter.py`, `scripts/inspect_device_adapters.py` |
-| Capability Runtime MVP | 细粒度推导 AP/CP/ASR、声卡、控制口、PA、网络、云环境、半/全双工、在线媒体、打断等能力 | `runtime/capability_runtime.py`, `scripts/build_capability_matrix.py` |
+| Capability Runtime MVP | 细粒度推导 AP/CP/ASR、声卡、控制口、PA、网络、云环境、半/全双工、在线媒体、打断、音频回采、媒体响应 oracle、云控权限、重启原因 oracle 等能力 | `runtime/capability_runtime.py`, `scripts/build_capability_matrix.py` |
 | Event Graph MVP | 从 Timeline 生成 `audio_caused_wake`、`wake_to_asr`、`asr_to_response`、网络恢复/失败因果边 | `runtime/event_graph.py`, `scripts/build_event_graph.py` |
 | State Assertion DSL-lite | 在 `runtime_state.json` 上执行状态断言、历史事件必选/任选、禁止事件 | `runtime/state_assertion_dsl.py`, `scripts/run_state_assertion_dsl.py` |
 | Validation IR MVP | task + env + resource + constraint + adapter + capability 编译为 `polaris.validation_ir.v1` | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
@@ -49,7 +49,7 @@
 | Validation Kernel | 已有 plugin kernel、Validation IR MVP、本地 lifecycle runner、runner 后 replay/event graph/state/replay_vm 侧证据、scene scheduler | adapter execute 尚未完全成为所有底层 tools 的唯一执行通道 |
 | Event Graph | 已有本地因果图 MVP | 事件因果仍是启发式，尚未覆盖所有云端/媒体/设备协议链路 |
 | Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率和 State Assertion DSL-lite | 尚未实现完整层级状态树和状态覆盖率阈值策略 |
-| Capability Runtime | 已有项目能力矩阵 MVP | codec、音频回采、真实出声质量、细粒度云控权限仍需继续补充 |
+| Capability Runtime | 已有项目能力矩阵 MVP，已显式列出音频回采、媒体响应 oracle、云控配置权限、boot reason oracle 缺口 | codec、真实出声质量评分、具体云 API token 权限校验仍需项目资料或实机接口 |
 | Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP | 现有 tools 尚未完全改造成统一 adapter execute interface |
 | IR Compiler | 已有 Validation IR MVP | 尚未把 feature/task/agent/scene 全入口统一到一个最终 IR schema |
 | Validation DSL Compiler | 已有 Assertion DSL-lite 和 State Assertion DSL-lite，可表达常见事件存在、窗口、序列、响应、持续时长、状态禁止 | 尚未替代 Python profile 断言，也未形成完整自然语言 DSL 编译器 |
@@ -133,3 +133,11 @@
 | `EXPECT_SEQUENCE` | WB01 `first_wake` replay 中验证 `WakeDetected -> ASRDetected -> MediaStarted WITHIN 3000ms` PASS |
 | `EXPECT_RESPONSE` | WB01 `first_wake` replay 中验证 `ASRDetected|CommandDetected` 后 `MediaStarted|TTSStarted` 1500ms 内响应 PASS |
 | `EXPECT_DURATION` | WB01 `first_wake` replay 中验证 `MediaStarted TO MediaCompleted >= 50ms` PASS |
+
+## 2026-05-26 Capability Runtime 细化验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Capability Matrix 细化 | 新增 `audio.loopback_oracle`、`media.response_log_oracle`、`media.acoustic_response_oracle`、`cloud.volume_control/night_mode/wake_word_config/wake_threshold/multi_wake`、`reboot.boot_reason_oracle` |
+| WB01 | 细化后 summary：`supported=21`、`config_required=8` |
+| WS63 | 细化后 summary：`supported=14`、`config_required=14`、`not_applicable=1` |

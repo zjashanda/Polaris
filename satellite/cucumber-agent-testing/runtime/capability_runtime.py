@@ -67,6 +67,19 @@ def _cap(name: str, supported: bool, evidence: List[str], gap: str = "", *, note
     )
 
 
+def _cloud_permission_cap(name: str, permission: str, api_env: str, cloud_permissions: List[str], gap: str) -> CapabilityItem:
+    supported = bool(api_env and permission in set(cloud_permissions))
+    return CapabilityItem(
+        name=name,
+        status="supported" if supported else "config_required",
+        evidence=[f"api_environment={api_env}", f"permission={permission}"] if supported else [],
+        gaps=[] if supported else [gap],
+        notes=[
+            "如项目有本地串口等价命令，也可在 intake/feature contract 中声明后接入 adapter action。"
+        ],
+    )
+
+
 def build_capability_matrix(env_payload: Dict[str, Any]) -> CapabilityMatrix:
     project_id = _text(env_payload.get("project_id") or _nested(env_payload, "_config_source", "active_project"))
     project_type = _text(env_payload.get("project_type"))
@@ -80,10 +93,15 @@ def build_capability_matrix(env_payload: Dict[str, Any]) -> CapabilityMatrix:
     asr = _text(ports.get("asr") or ports.get("upper"))
     control = _text(ports.get("control"))
     audio_key = _text(_nested(env_payload, "audio", "default_playback_device_key"))
+    audio_capture_key = _text(_nested(env_payload, "audio", "capture_device_key") or _nested(env_payload, "audio", "loopback_device_key"))
     wifi_ssid = _text(_nested(env_payload, "network", "wifi_ssid"))
     hotspot = bool(_nested(env_payload, "network", "enable_hotspot_control"))
     api_env = _text(_nested(env_payload, "cloud", "api_environment"))
     device_env_cmd = _text(_nested(env_payload, "cloud", "device_env_command"))
+    cloud_permissions_raw = _nested(env_payload, "cloud", "capabilities") or _nested(env_payload, "cloud", "permissions")
+    cloud_permissions = [str(item).strip() for item in cloud_permissions_raw] if isinstance(cloud_permissions_raw, list) else []
+    boot_reason_patterns = _nested(env_payload, "reboot", "boot_reason_patterns") or _nested(env_payload, "diagnostics", "boot_reason_patterns")
+    boot_reason_patterns = boot_reason_patterns if isinstance(boot_reason_patterns, list) else []
     preconditions = _nested(env_payload, "serial", "control_preconditions")
     preconditions = preconditions if isinstance(preconditions, list) else []
 
@@ -105,11 +123,22 @@ def build_capability_matrix(env_payload: Dict[str, Any]) -> CapabilityMatrix:
         _cap("serial.asr_log", bool(asr), [f"asr={asr}"], "配置 serial.ports.asr 或 serial.ports.upper"),
         _cap("serial.control", control_ready, [f"control={control}"], "配置 serial.ports.control"),
         _cap("audio.playback", True, [f"device_key={audio_key or 'DEFAULT_RENDER_DEVICE'}"], ""),
+        _cap(
+            "audio.loopback_oracle",
+            bool(audio_capture_key),
+            [f"capture_device_key={audio_capture_key}"],
+            "如需真实出声/回采判定，配置 audio.capture_device_key 或 audio.loopback_device_key；否则只能依赖设备日志判断播报。",
+        ),
         _cap("power.pa_control", pa_ready, [f"control={control}", f"preconditions={len(preconditions)}"], "配置控制口和 serial.control_preconditions"),
         _cap("network.wifi_config", bool(wifi_ssid), [f"ssid={wifi_ssid}"], "配置 network.wifi_ssid"),
         _cap("network.hotspot_control", hotspot, ["enable_hotspot_control=true"], "配置 network.enable_hotspot_control=true"),
         _cap("cloud.api", bool(api_env), [f"api_environment={api_env}"], "配置 cloud.api_environment"),
         _cap("cloud.device_env_switch", bool(api_env and device_env_cmd), [f"env={api_env}", f"command={device_env_cmd}"], "配置 cloud.device_env_command"),
+        _cloud_permission_cap("cloud.volume_control", "volume_control", api_env, cloud_permissions, "需要 cloud.capabilities/permissions 声明 volume_control，或提供本地等价命令。"),
+        _cloud_permission_cap("cloud.night_mode", "night_mode", api_env, cloud_permissions, "需要 cloud.capabilities/permissions 声明 night_mode，或提供本地等价命令。"),
+        _cloud_permission_cap("cloud.wake_word_config", "wake_word_config", api_env, cloud_permissions, "需要 cloud.capabilities/permissions 声明 wake_word_config，或提供本地等价命令。"),
+        _cloud_permission_cap("cloud.wake_threshold", "wake_threshold", api_env, cloud_permissions, "需要 cloud.capabilities/permissions 声明 wake_threshold，或提供本地等价命令。"),
+        _cloud_permission_cap("cloud.multi_wake", "multi_wake", api_env, cloud_permissions, "需要 cloud.capabilities/permissions 声明 multi_wake，或提供本地等价命令。"),
         _cap("wake.first_wake", first_wake_ready, [f"ap={ap}", f"asr={asr}"], "需要 AP/ASR 日志和音频播放"),
         _cap("wake.three_port_closed_loop", three_port_ready, [f"ap={ap}", f"cp={cp}", f"asr={asr}"], "需要 AP/CP/ASR 三端日志"),
         _cap("wake.recognition_mode_wake", first_wake_ready, ["first_wake prerequisites", f"timeout={_nested(env_payload, 'timeouts', 'recognition_timeout_s') or 15}s"], "先满足 wake.first_wake"),
@@ -129,9 +158,22 @@ def build_capability_matrix(env_payload: Dict[str, Any]) -> CapabilityMatrix:
             notes=["已接 Runtime profile；具体能否执行取决于项目 API/命令是否可用。"],
         ),
         _cap("media.online_interaction", online_ready, [f"ssid={wifi_ssid}", f"api_environment={api_env}"], "需要 Wi-Fi 与 cloud.api_environment"),
+        _cap("media.response_log_oracle", bool(ap or asr), [f"ap={ap}", f"asr={asr}"], "需要 AP 或 ASR/上位日志解析 TTSStarted/MediaStarted/MediaCompleted。"),
+        _cap(
+            "media.acoustic_response_oracle",
+            bool(audio_capture_key),
+            [f"capture_device_key={audio_capture_key}"],
+            "需要音频回采设备或声学 loopback；否则只能证明设备日志说播了，不能证明真实出声质量。",
+        ),
         _cap("interrupt.wake_interrupt", first_wake_ready and pa_ready, ["wake prerequisites", "pa/control available"], "需要首唤醒能力和自播/PA 前置"),
         _cap("interrupt.command_interrupt", first_wake_ready and online_ready, ["wake prerequisites", "online/media available"], "需要首唤醒能力和可触发自播/在线媒体"),
         _cap("network.recovery_basic", bool(hotspot and wifi_ssid), ["hotspot control", f"ssid={wifi_ssid}"], "需要 PC 热点控制和 Wi-Fi 配置"),
+        _cap(
+            "reboot.boot_reason_oracle",
+            bool(ap and boot_reason_patterns),
+            [f"ap={ap}", f"patterns={len(boot_reason_patterns)}"],
+            "需要项目提供 boot reason/reset reason/watchdog/crash 原因日志模式，当前只能检测 RebootDetected/CrashDetected 事件。",
+        ),
     ]
     return CapabilityMatrix(project_id=project_id, project_type=project_type, capabilities=items)
 
