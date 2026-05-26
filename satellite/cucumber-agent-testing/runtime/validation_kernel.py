@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional
 from .analytics_trend import build_trend, render_trend_markdown
 from .event_graph import build_event_graph, render_event_graph_markdown
 from .events import ValidationEvent
+from .replay_vm import ReplayVM
+from .state_assertion_dsl import evaluate_state_dsl
 from .timeline import Timeline
 from .validation_ir import build_validation_ir
 
@@ -70,6 +72,20 @@ def _timeline_from_json(path: Path) -> Timeline:
         if isinstance(item, dict):
             events.append(ValidationEvent(**{key: value for key, value in item.items() if key in EVENT_FIELDS}))
     return Timeline.from_events(events)
+
+
+def _timeline_from_payload(payload: Dict[str, Any]) -> Timeline:
+    timeline_payload = payload.get("timeline", {}) if isinstance(payload.get("timeline"), dict) else {}
+    events: List[ValidationEvent] = []
+    for item in timeline_payload.get("events", []):
+        if isinstance(item, dict):
+            events.append(ValidationEvent(**{key: value for key, value in item.items() if key in EVENT_FIELDS}))
+    return Timeline.from_events(events)
+
+
+def _resolve_workspace_path(workspace_root: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else (workspace_root / path).resolve()
 
 
 @dataclass
@@ -139,6 +155,8 @@ class ValidationKernel:
         manage_session: bool = False,
         runtime_strict: bool = False,
         max_retries: int = 0,
+        command_text: str = "",
+        observe_ms: str = "",
     ) -> KernelRecord:
         started = now_iso()
         ir = build_validation_ir(
@@ -170,9 +188,13 @@ class ValidationKernel:
                 manage_session=manage_session,
                 runtime_strict=runtime_strict,
                 max_retries=max_retries,
+                command_text=command_text,
+                observe_ms=observe_ms,
             )
             result = str(runner_summary.get("result", "UNKNOWN") or "UNKNOWN")
-            self._build_runner_sidecars(runner_summary)
+            sidecar_result = self._build_runner_sidecars(runner_summary)
+            if sidecar_result == "FAIL" and result == "PASS":
+                result = "FAIL"
         elif execute_runner:
             self.stage("runner_skipped", "BLOCKED", now_iso(), {"reason": f"preflight result={result}"})
 
@@ -193,6 +215,8 @@ class ValidationKernel:
         optional_artifacts = {
             "event_graph": self.out_dir / "event_graph.json",
             "event_graph_report": self.out_dir / "event_graph_report.md",
+            "runtime_analysis": self.out_dir / "runtime_analysis.json",
+            "runtime_analysis_report": self.out_dir / "runtime_analysis.md",
             "analytics_trend": self.out_dir / "analytics_trend.json",
             "analytics_trend_report": self.out_dir / "analytics_trend.md",
         }
@@ -224,6 +248,8 @@ class ValidationKernel:
         manage_session: bool,
         runtime_strict: bool,
         max_retries: int,
+        command_text: str = "",
+        observe_ms: str = "",
     ) -> Dict[str, Any]:
         started = now_iso()
         cmd = [
@@ -242,6 +268,10 @@ class ValidationKernel:
         ]
         if tag:
             cmd.extend(["--tag", tag])
+        if command_text:
+            cmd.extend(["--command-text", command_text])
+        if observe_ms:
+            cmd.extend(["--observe-ms", observe_ms])
         if allow_side_effects:
             cmd.append("--allow-side-effects")
         if manage_session:
@@ -283,18 +313,164 @@ class ValidationKernel:
             "run_root": run_root,
         }
 
-    def _build_runner_sidecars(self, runner_summary: Dict[str, Any]) -> None:
+    def _build_runner_sidecars(self, runner_summary: Dict[str, Any]) -> str:
         run_root = Path(str(runner_summary.get("run_root", "") or ""))
         if not run_root.exists():
-            return
+            return "SKIPPED"
         execution_record = next(run_root.rglob("execution_record.json"), None)
         if execution_record:
             write_json(self.out_dir / "runner_execution_record_ref.json", {"execution_record": str(execution_record)})
-        timeline_files = list(run_root.rglob("runtime_replay/*/timeline.json"))
-        if not timeline_files:
-            return
-        timeline = _timeline_from_json(timeline_files[0])
-        graph = build_event_graph(timeline)
-        write_json(self.out_dir / "event_graph.json", graph.to_dict())
-        (self.out_dir / "event_graph_report.md").write_text(render_event_graph_markdown(graph), encoding="utf-8")
-        self.stage("event_graph", "PASS", now_iso(), {"nodes": len(graph.nodes), "edges": len(graph.edges), "warnings": len(graph.warnings)})
+        replay_packages = self._discover_replay_packages(run_root, execution_record)
+        if not replay_packages:
+            self.stage("runtime_sidecars", "SKIPPED", now_iso(), {"reason": "no runtime replay package found", "run_root": str(run_root)})
+            return "SKIPPED"
+
+        analyses: List[Dict[str, Any]] = []
+        for index, package_path in enumerate(replay_packages, start=1):
+            package = _load_json(package_path)
+            metadata = package.get("metadata", {}) if isinstance(package.get("metadata"), dict) else {}
+            profile = str(metadata.get("profile", package_path.parent.name) or package_path.parent.name)
+            scenario_id = package_path.parent.name
+            analysis_dir = self.out_dir / "post_analysis" / f"{index:02d}_{scenario_id}"
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+
+            timeline = _timeline_from_payload(package)
+            graph = build_event_graph(timeline)
+            write_json(analysis_dir / "event_graph.json", graph.to_dict())
+            (analysis_dir / "event_graph_report.md").write_text(render_event_graph_markdown(graph), encoding="utf-8")
+
+            state = package.get("runtime_state", {}) if isinstance(package.get("runtime_state"), dict) else {}
+            policy_dsl = self._default_state_assertion_dsl(profile)
+            (analysis_dir / "default_state_assertions.dsl").write_text(policy_dsl, encoding="utf-8")
+            state_assertions = evaluate_state_dsl(state, policy_dsl) if state else {
+                "schema": "polaris.state_assertion_dsl_result.v1",
+                "result": "SKIPPED",
+                "assertion_count": 0,
+                "assertions": [],
+                "reason": "runtime_state missing",
+            }
+            write_json(analysis_dir / "state_assertions.json", state_assertions)
+
+            vm = ReplayVM(package)
+            for _ in range(max(0, len(timeline.events))):
+                if not vm.step():
+                    break
+            vm.snapshot()
+            write_json(analysis_dir / "replay_vm_state.json", vm.to_dict())
+
+            assertion_summary = package.get("assertion_summary", {}) if isinstance(package.get("assertion_summary"), dict) else {}
+            item = {
+                "scenario_id": scenario_id,
+                "profile": profile,
+                "package": str(package_path),
+                "event_count": package.get("timeline", {}).get("event_count", len(timeline.events)) if isinstance(package.get("timeline"), dict) else len(timeline.events),
+                "assertion_result": assertion_summary.get("result", "UNKNOWN"),
+                "state_assertion_result": state_assertions.get("result", "UNKNOWN"),
+                "event_graph": str(analysis_dir / "event_graph.json"),
+                "state_assertions": str(analysis_dir / "state_assertions.json"),
+                "replay_vm_state": str(analysis_dir / "replay_vm_state.json"),
+            }
+            analyses.append(item)
+            self.stage(
+                "runtime_sidecar_analysis",
+                str(state_assertions.get("result", "UNKNOWN")),
+                now_iso(),
+                {
+                    "scenario_id": scenario_id,
+                    "profile": profile,
+                    "events": item["event_count"],
+                    "graph_nodes": len(graph.nodes),
+                    "graph_edges": len(graph.edges),
+                    "graph_warnings": len(graph.warnings),
+                },
+            )
+
+        aggregate = self._aggregate_runtime_analysis(analyses)
+        write_json(self.out_dir / "runtime_analysis.json", {"schema": "polaris.kernel_runtime_analysis.v1", "result": aggregate, "items": analyses})
+        (self.out_dir / "runtime_analysis.md").write_text(self._render_runtime_analysis_markdown(aggregate, analyses), encoding="utf-8")
+        if analyses:
+            first_graph = Path(str(analyses[0].get("event_graph", "")))
+            if first_graph.exists():
+                write_json(self.out_dir / "event_graph.json", _load_json(first_graph))
+                report = first_graph.with_name("event_graph_report.md")
+                if report.exists():
+                    (self.out_dir / "event_graph_report.md").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
+        return aggregate
+
+    def _discover_replay_packages(self, run_root: Path, execution_record: Optional[Path]) -> List[Path]:
+        packages: List[Path] = []
+        packages.extend(run_root.rglob("runtime_replay/*/replay_package.json"))
+        if execution_record and execution_record.exists():
+            record = _load_json(execution_record)
+            for attempt in record.get("attempts", []) if isinstance(record.get("attempts"), list) else []:
+                if not isinstance(attempt, dict):
+                    continue
+                run_dir_text = str(attempt.get("run_dir", "") or "").strip()
+                if not run_dir_text:
+                    continue
+                run_dir = _resolve_workspace_path(self.workspace_root, run_dir_text)
+                if run_dir.exists():
+                    packages.extend(run_dir.rglob("runtime_replay/*/replay_package.json"))
+        unique: List[Path] = []
+        seen: set[str] = set()
+        for path in packages:
+            key = str(path.resolve()).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(path)
+        return unique
+
+    def _default_state_assertion_dsl(self, profile: str) -> str:
+        policy_path = self.scripts_dir.parent / "references" / "optimization" / "state_assertion_policy.json"
+        policy = _load_json(policy_path)
+        lines: List[str] = []
+        common = policy.get("common", []) if isinstance(policy.get("common"), list) else []
+        lines.extend(str(item) for item in common if str(item).strip())
+        profiles = policy.get("profiles", {}) if isinstance(policy.get("profiles"), dict) else {}
+        profile_lines = profiles.get(profile, []) if isinstance(profiles.get(profile), list) else []
+        lines.extend(str(item) for item in profile_lines if str(item).strip())
+        if not lines:
+            lines = [
+                "FORBID_STATE parallel_states.power = CRASHED",
+                "FORBID_STATE final_state = CRASHED",
+                "FORBID_HISTORY CrashDetected",
+            ]
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _aggregate_runtime_analysis(analyses: List[Dict[str, Any]]) -> str:
+        results = [str(item.get("state_assertion_result", "") or "").upper() for item in analyses]
+        if not results:
+            return "SKIPPED"
+        if any(item == "FAIL" for item in results):
+            return "FAIL"
+        if all(item == "SKIPPED" for item in results):
+            return "SKIPPED"
+        if any(item in {"UNKNOWN", "ERROR"} for item in results):
+            return "WARN"
+        return "PASS"
+
+    @staticmethod
+    def _render_runtime_analysis_markdown(result: str, analyses: List[Dict[str, Any]]) -> str:
+        lines = [
+            "# Kernel Runtime Analysis",
+            "",
+            f"- result: `{result}`",
+            f"- items: `{len(analyses)}`",
+            "",
+            "| Scenario | Profile | Events | Assertion | State Assertion |",
+            "|---|---|---:|---|---|",
+        ]
+        for item in analyses:
+            lines.append(
+                "| {scenario} | `{profile}` | {events} | `{assertion}` | `{state}` |".format(
+                    scenario=item.get("scenario_id", ""),
+                    profile=item.get("profile", ""),
+                    events=item.get("event_count", 0),
+                    assertion=item.get("assertion_result", "UNKNOWN"),
+                    state=item.get("state_assertion_result", "UNKNOWN"),
+                )
+            )
+        lines.append("")
+        return "\n".join(lines)

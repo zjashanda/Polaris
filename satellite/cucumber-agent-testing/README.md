@@ -251,7 +251,7 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 首唤醒 profile 已处理声卡播放工具初始化耗时：如果播放进程明显长于 wav 时长，Runtime 会用 `AudioCompleted - audio_duration_ms` 估算有效波形起点，再计算 `WakeDetected_within_3000ms`；仍无法估算时才输出 `TIMING_AMBIGUOUS`。WS63 `cp` 留空时，BDD/Runtime 都只要求 AP/ASR 唤醒闭环。
 
-当前本地 Runtime 还提供 adapter registry、capability matrix、event graph、state assertion DSL、Validation IR、Validation Kernel 生命周期和 analytics trend 入口，分别用于回答“这个项目能测什么、要占用什么资源、事件因果链是什么、最终状态是否安全、task/env 如何进入统一 IR、一次执行经历了哪些 kernel 阶段、历史结果趋势如何”。adapter 单动作可通过 `run_adapter_action.py` 先 dry-run 渲染命令，真执行副作用必须显式 `--execute --allow-side-effects`。
+当前本地 Runtime 还提供 adapter registry、capability matrix、event graph、state assertion DSL、Validation IR、Validation Kernel 生命周期、Kernel scene 调度和 analytics trend 入口，分别用于回答“这个项目能测什么、要占用什么资源、事件因果链是什么、最终状态是否安全、task/env 如何进入统一 IR、一次执行经历了哪些 kernel 阶段、scene 每个节点是否独立闭环、历史结果趋势如何”。adapter 单动作可通过 `run_adapter_action.py` 先 dry-run 渲染命令，真执行副作用必须显式 `--execute --allow-side-effects`。
 
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 

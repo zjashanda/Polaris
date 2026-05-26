@@ -1,0 +1,78 @@
+{
+  "schema": "polaris.state_assertion_policy.v1",
+  "description": "Validation Kernel 默认状态断言策略。common 适用于所有 profile，profiles 按 runtime profile 追加；不替代 Python 业务断言，只补齐崩溃/重启/关键事件兜底。",
+  "common": [
+    "FORBID_STATE parallel_states.power = CRASHED",
+    "FORBID_STATE final_state = CRASHED",
+    "FORBID_HISTORY CrashDetected"
+  ],
+  "profiles": {
+    "first_wake": [
+      "EXPECT_HISTORY WakeDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "recognition_mode_wake": [
+      "EXPECT_HISTORY WakeDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "basic_command": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "command_batch": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "command_batch_exploratory": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "offline_oneshot_matrix": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "online_oneshot_matrix": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "EXPECT_ANY_HISTORY TTSStarted|MediaStarted",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "wake_matrix": [
+      "EXPECT_HISTORY WakeDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "online_vad_special": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "EXPECT_ANY_HISTORY TTSStarted|MediaStarted",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "false_wake_quiet": [
+      "FORBID_HISTORY WakeDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "false_wake_playback": [
+      "FORBID_HISTORY WakeDetected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "wake_interrupt": [
+      "EXPECT_HISTORY WakeDetected",
+      "EXPECT_HISTORY InterruptInjected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "command_interrupt": [
+      "EXPECT_ANY_HISTORY ASRDetected|CommandDetected",
+      "EXPECT_HISTORY InterruptInjected",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "network_recovery_basic": [
+      "EXPECT_HISTORY NetworkLost",
+      "EXPECT_HISTORY NetworkRecovered"
+    ],
+    "interrupt_prerequisite_measurement": [
+      "EXPECT_ANY_HISTORY TTSStarted|MediaStarted",
+      "FORBID_HISTORY RebootDetected"
+    ],
+    "attribution_validator": [
+      "FORBID_HISTORY RebootDetected"
+    ]
+  }
+}

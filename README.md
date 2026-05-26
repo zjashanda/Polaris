@@ -272,6 +272,44 @@ state_diff.json
 attempt_01/stdout.log
 ```
 
+### 5.8 Kernel 生命周期与 Scene 调度
+
+`run_validation_kernel.py` 是当前推荐的统一入口。它先把 `task + env` 编译为 Validation IR，再输出 adapter/capability/resource/constraint 快照；如果带 `--execute-runner`，会继续调用 `run_optimized_task.py`，并在真机执行后自动生成 replay 侧证据。
+
+单任务 dry-run：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_validation_kernel.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --env-file polaris.local.json --mode dry-run --execute-runner
+```
+
+scene 通过 Kernel 执行：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_kernel_scene.py --scene satellite\cucumber-agent-testing\debug\validation\scene_smoke.json --env-file polaris.local.json --mode dry-run --execute-runner
+```
+
+真机执行时仍必须显式允许副作用：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_validation_kernel.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --env-file polaris.local.json --mode execute --execute-runner --allow-side-effects --manage-session --runtime-strict
+```
+
+Kernel 重点产物：
+
+```text
+kernel_record.json
+lifecycle.jsonl
+validation_ir.json
+adapter_registry.json
+capability_matrix.json
+resource_snapshot.json
+constraint_result.json
+runtime_analysis.json        # 真机 replay 存在时生成
+post_analysis/*/event_graph.json
+post_analysis/*/state_assertions.json
+post_analysis/*/replay_vm_state.json
+```
+
 ## 6. Task JSON 怎么写
 
 推荐先复制 `satellite/cucumber-agent-testing/tasks/examples/` 下的模板。
@@ -418,6 +456,7 @@ scripts/build_event_graph.py        # timeline/run_dir -> causal event graph
 scripts/run_state_assertion_dsl.py  # runtime_state -> state assertions
 scripts/compile_validation_ir.py    # task + env -> Validation IR
 scripts/run_validation_kernel.py    # task + env -> Kernel lifecycle record
+scripts/run_kernel_scene.py         # scene graph -> per-node Kernel lifecycle record
 scripts/run_adapter_action.py       # adapter registry action -> command plan/execute
 scripts/build_analytics_trend.py    # execution_record history -> local trend report
 docs/skill/runtime-implementation-matrix.md
@@ -430,6 +469,7 @@ docs/skill/runtime-implementation-matrix.md
 - `run_optimized_task.py` 已修正聚合逻辑，会按 scenario/runtime 结果输出 `FAIL`、`BLOCKED`、`TIMING_AMBIGUOUS` 或 `PASS`，不会把 `status=DONE` 误当 PASS。
 - Adapter/Capability/EventGraph/StateDSL/ValidationIR/AnalyticsTrend 已完成本地 MVP，WB01 与 WS63 都做了 smoke 验证；详细数字见 `docs/skill/runtime-implementation-matrix.md`。
 - Validation Kernel 生命周期已完成本地 MVP：`run_validation_kernel.py` 会产出 `kernel_record.json`、`lifecycle.jsonl`、`validation_ir.json`、adapter/capability/resource/constraint 快照，并可委托 `run_optimized_task.py` 执行。
+- Kernel scene 调度已接入：`run_kernel_scene.py` 会让 scene 每个节点都走 Kernel 生命周期；真机执行后的 runtime replay 会自动补齐 event graph、默认 state assertions、Replay VM-lite snapshot 和 `runtime_analysis.json`。
 
 ## 10. Event Runtime Phase 1 结构
 

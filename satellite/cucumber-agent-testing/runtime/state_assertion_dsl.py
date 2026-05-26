@@ -6,6 +6,8 @@ Supported lines:
 - EXPECT_STATE parallel_states.power = ON
 - FORBID_STATE parallel_states.power = CRASHED
 - EXPECT_HISTORY WakeDetected
+- EXPECT_ANY_HISTORY TTSStarted|MediaStarted
+- FORBID_HISTORY CrashDetected
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from typing import Any, Dict, List
 
 STATE_RE = re.compile(r"^(?P<op>EXPECT_STATE|FORBID_STATE)\s+(?P<path>[A-Za-z0-9_.-]+)\s*=\s*(?P<value>.+)$")
 HISTORY_RE = re.compile(r"^EXPECT_HISTORY\s+(?P<event_type>[A-Za-z0-9_]+)$")
+ANY_HISTORY_RE = re.compile(r"^EXPECT_ANY_HISTORY\s+(?P<event_types>[A-Za-z0-9_|, ]+)$")
+FORBID_HISTORY_RE = re.compile(r"^FORBID_HISTORY\s+(?P<event_type>[A-Za-z0-9_]+)$")
 
 
 @dataclass
@@ -72,6 +76,40 @@ def evaluate_state_dsl(state: Dict[str, Any], dsl_text: str) -> Dict[str, Any]:
                     name=f"expect_history:{event_type}",
                     result="PASS" if hits else "FAIL",
                     reason=f"line {line_no}: history contains {len(hits)} {event_type} events.",
+                    actual={"event_type": event_type, "count": len(hits)},
+                )
+            )
+            continue
+        match = ANY_HISTORY_RE.match(line)
+        if match:
+            event_types = [
+                item.strip()
+                for item in re.split(r"[|,]", match.group("event_types"))
+                if item.strip()
+            ]
+            hits = [
+                item
+                for item in state.get("history", [])
+                if isinstance(item, dict) and item.get("event_type") in set(event_types)
+            ]
+            assertions.append(
+                StateAssertionResult(
+                    name=f"expect_any_history:{'|'.join(event_types)}",
+                    result="PASS" if hits else "FAIL",
+                    reason=f"line {line_no}: history contains {len(hits)} events among {event_types}.",
+                    actual={"event_types": event_types, "count": len(hits)},
+                )
+            )
+            continue
+        match = FORBID_HISTORY_RE.match(line)
+        if match:
+            event_type = match.group("event_type")
+            hits = [item for item in state.get("history", []) if isinstance(item, dict) and item.get("event_type") == event_type]
+            assertions.append(
+                StateAssertionResult(
+                    name=f"forbid_history:{event_type}",
+                    result="PASS" if not hits else "FAIL",
+                    reason=f"line {line_no}: history contains {len(hits)} forbidden {event_type} events.",
                     actual={"event_type": event_type, "count": len(hits)},
                 )
             )

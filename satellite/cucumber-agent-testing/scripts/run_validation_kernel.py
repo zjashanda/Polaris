@@ -42,6 +42,8 @@ def main() -> int:
     parser.add_argument("--manage-session", action="store_true")
     parser.add_argument("--runtime-strict", action="store_true")
     parser.add_argument("--max-retries", type=int, default=0)
+    parser.add_argument("--command-text", default="", help="覆盖 task 中的单条命令词/在线语料。")
+    parser.add_argument("--observe-ms", default="", help="覆盖 task 中的观察窗口。")
     parser.add_argument("--out-dir", default="")
     args = parser.parse_args()
 
@@ -70,6 +72,8 @@ def main() -> int:
         manage_session=args.manage_session,
         runtime_strict=args.runtime_strict,
         max_retries=args.max_retries,
+        command_text=args.command_text,
+        observe_ms=args.observe_ms,
     )
     print(out_dir)
     print(f"result={record.result} kernel_id={record.kernel_id}")
