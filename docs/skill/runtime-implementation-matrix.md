@@ -36,16 +36,18 @@
 | State Assertion DSL-lite | 在 `runtime_state.json` 上执行 `EXPECT_STATE`、`FORBID_STATE`、`EXPECT_HISTORY` | `runtime/state_assertion_dsl.py`, `scripts/run_state_assertion_dsl.py` |
 | Validation IR MVP | task + env + resource + constraint + adapter + capability 编译为 `polaris.validation_ir.v1` | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
 | Analytics Trend MVP | 扫描 `execution_record.json`，按 day/project/task 聚合 result/stability 趋势 | `runtime/analytics_trend.py`, `scripts/build_analytics_trend.py` |
+| Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `scripts/run_adapter_action.py` |
+| Validation Kernel Lifecycle MVP | compile_ir、preflight、adapter/capability/resource/constraint 快照、可选 run_optimized_task、kernel_record/lifecycle | `runtime/validation_kernel.py`, `scripts/run_validation_kernel.py` |
 
 ## 部分完成
 
 | 方案项 | 当前状态 | 后续差距 |
 |---|---|---|
-| Validation Kernel | 已有 plugin kernel 和 Validation IR MVP | 尚未把 IR、resource、constraint、replay vm 全部交给同一个 Kernel 生命周期调度 |
+| Validation Kernel | 已有 plugin kernel、Validation IR MVP 和本地 lifecycle runner | 尚未把 replay vm、scene scheduler、adapter execute 全部收敛到同一个长生命周期内核 |
 | Event Graph | 已有本地因果图 MVP | 事件因果仍是启发式，尚未覆盖所有云端/媒体/设备协议链路 |
 | Hierarchical StateMachine | 已有并行状态快照和 State Assertion DSL-lite | 尚未实现完整层级状态树、状态迁移 guard 和状态覆盖率统计 |
 | Capability Runtime | 已有项目能力矩阵 MVP | codec、音频回采、真实出声质量、细粒度云控权限仍需继续补充 |
-| Device Adapter Layer | 已有 adapter registry MVP | 现有 tools 尚未完全改造成统一 adapter execute interface |
+| Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP | 现有 tools 尚未完全改造成统一 adapter execute interface |
 | IR Compiler | 已有 Validation IR MVP | 尚未把 feature/task/agent/scene 全入口统一到一个最终 IR schema |
 | Analytics Pipeline | 已有本地 trend MVP | 尚未流式化，也未接长期指标库/看板 |
 
@@ -71,7 +73,9 @@
 7. `compile_validation_ir.py`：验证 task/env 能编译到稳定 IR。
 8. `build_event_graph.py` + `run_state_assertion_dsl.py`：验证因果图和状态断言。
 9. `build_analytics_trend.py`：验证本地执行记录趋势汇总。
-10. WB01/WS63 分别执行 precheck/dry-run，小规模 true-device smoke 按需执行。
+10. `run_adapter_action.py`：验证 adapter action 只规划命令或显式执行。
+11. `run_validation_kernel.py`：验证 Kernel 生命周期记录和可选 runner 委托。
+12. WB01/WS63 分别执行 precheck/dry-run，小规模 true-device smoke 按需执行。
 
 ## 2026-05-26 真机验证记录
 
@@ -92,3 +96,11 @@
 | State Assertion DSL | WB01/WS63 均 PASS，断言 WakeDetected history 存在且 power/final_state 未 CRASHED |
 | Validation IR | WB01/WS63 `first_wake` IR constraints 均 PASS |
 | Analytics Trend | 本地 optimized_runs 历史扫描 records=11，结果只作为本机历史样本，不提交 |
+
+## 2026-05-26 Kernel 生命周期补齐验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Adapter Action Executor | WB01 `control.serial/send_control command=uut-pa.on` dry-run 渲染命令成功，PLAN_OK，未真实执行 |
+| Validation Kernel Lifecycle | WB01 `first_wake` dry-run + execute-runner PASS，输出 `kernel_record.json` / `lifecycle.jsonl` |
+| Validation Kernel Lifecycle | WS63 `first_wake` dry-run + execute-runner PASS，输出 `kernel_record.json` / `lifecycle.jsonl` |

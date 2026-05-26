@@ -417,6 +417,8 @@ scripts/build_capability_matrix.py  # env -> project capability matrix
 scripts/build_event_graph.py        # timeline/run_dir -> causal event graph
 scripts/run_state_assertion_dsl.py  # runtime_state -> state assertions
 scripts/compile_validation_ir.py    # task + env -> Validation IR
+scripts/run_validation_kernel.py    # task + env -> Kernel lifecycle record
+scripts/run_adapter_action.py       # adapter registry action -> command plan/execute
 scripts/build_analytics_trend.py    # execution_record history -> local trend report
 docs/skill/runtime-implementation-matrix.md
 ```
@@ -427,6 +429,7 @@ docs/skill/runtime-implementation-matrix.md
 - WS63：`first_wake` 通过，managed session 使用 COM20/COM16，BDD 观察到 AP/ASR 闭环，Runtime PASS。
 - `run_optimized_task.py` 已修正聚合逻辑，会按 scenario/runtime 结果输出 `FAIL`、`BLOCKED`、`TIMING_AMBIGUOUS` 或 `PASS`，不会把 `status=DONE` 误当 PASS。
 - Adapter/Capability/EventGraph/StateDSL/ValidationIR/AnalyticsTrend 已完成本地 MVP，WB01 与 WS63 都做了 smoke 验证；详细数字见 `docs/skill/runtime-implementation-matrix.md`。
+- Validation Kernel 生命周期已完成本地 MVP：`run_validation_kernel.py` 会产出 `kernel_record.json`、`lifecycle.jsonl`、`validation_ir.json`、adapter/capability/resource/constraint 快照，并可委托 `run_optimized_task.py` 执行。
 
 ## 10. Event Runtime Phase 1 结构
 
