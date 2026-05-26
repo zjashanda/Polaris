@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """离线编译 Gherkin feature 为可执行 plan。
 
@@ -255,7 +255,7 @@ def resolve_context(args: argparse.Namespace, mapping: Dict[str, Any]) -> Dict[s
         args.command_file,
         defaults.get("command_file", ""),
         nested(env_payload, "paths", "command_file"),
-        "doc/fa2命令词.txt",
+        "docs/fa2命令词.txt",
     )
     command_limit = first_non_empty(args.command_limit, defaults.get("command_limit", ""), nested(env_payload, "limits", "command_limit"), "20")
     observe_ms = first_non_empty(args.observe_ms, defaults.get("observe_ms", ""), nested(env_payload, "timeouts", "observe_ms"), "15000")

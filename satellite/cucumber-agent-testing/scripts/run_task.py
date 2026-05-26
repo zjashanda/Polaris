@@ -23,6 +23,7 @@ BDD_ROOT = SCRIPT_DIR.parents[0]
 WORKSPACE_ROOT = SCRIPT_DIR.parents[2]
 RUN_CUCUMBER = SCRIPT_DIR / "run_cucumber.py"
 COMPILE_FEATURE = SCRIPT_DIR / "compile_feature.py"
+ONLINE_MIXED_STRESS = SCRIPT_DIR / "run_online_mixed_stress.py"
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -186,6 +187,7 @@ def build_run_command(
     compiled_plan: str,
     allow_side_effects: bool,
     manage_session: bool,
+    runtime_strict: bool,
 ) -> List[str]:
     cmd = [
         sys.executable,
@@ -214,6 +216,46 @@ def build_run_command(
         cmd.append("--allow-side-effects")
     if manage_session:
         cmd.append("--manage-session")
+    if runtime_strict:
+        cmd.append("--runtime-strict")
+    return cmd
+
+
+def is_online_stress_task(task: Dict[str, Any]) -> bool:
+    runner = task.get("runner", {}) if isinstance(task.get("runner"), dict) else {}
+    schema = str(task.get("schema", ""))
+    entrypoint = str(runner.get("entrypoint", ""))
+    return "online-stress" in schema or "run_online_mixed_stress.py" in entrypoint
+
+
+def build_online_stress_command(args: argparse.Namespace, task: Dict[str, Any], env_file: str) -> List[str]:
+    runner = task.get("runner", {}) if isinstance(task.get("runner"), dict) else {}
+    environment = task.get("environment", {}) if isinstance(task.get("environment"), dict) else {}
+    execution = task.get("execution", {}) if isinstance(task.get("execution"), dict) else {}
+    overrides = task.get("overrides", {}) if isinstance(task.get("overrides"), dict) else {}
+    entrypoint = first_non_empty(runner.get("entrypoint"), str(ONLINE_MIXED_STRESS))
+    cmd = [
+        sys.executable,
+        resolve_workspace_path(entrypoint),
+        "--env-file",
+        resolve_workspace_path(env_file),
+    ]
+    add_optional(cmd, "--project", environment.get("project"))
+    add_optional(cmd, "--strategy-file", runner.get("strategy_file"), path_value=True)
+    add_optional(cmd, "--strategy-name", runner.get("strategy_name"))
+    add_optional(cmd, "--end-at", execution.get("end_at"))
+    add_optional(cmd, "--max-rounds", execution.get("max_rounds"))
+    add_optional(cmd, "--seed", execution.get("seed"))
+    add_optional(cmd, "--summary-every", execution.get("summary_every"))
+    add_optional(cmd, "--sample-window-every", execution.get("sample_window_every"))
+    random_gap = overrides.get("random_gap_s", [])
+    if isinstance(random_gap, list) and len(random_gap) >= 2:
+        cmd.extend(["--min-gap-s", str(random_gap[0]), "--max-gap-s", str(random_gap[1])])
+    observe = overrides.get("observe_s", [])
+    if isinstance(observe, list) and len(observe) >= 2:
+        cmd.extend(["--min-observe-s", str(observe[0]), "--max-observe-s", str(observe[1])])
+    add_optional(cmd, "--device-key", args.device_key)
+    add_optional(cmd, "--wake-text", args.wake_word)
     return cmd
 
 
@@ -267,6 +309,8 @@ def main() -> int:
     parser.add_argument("--no-allow-side-effects", dest="allow_side_effects", action="store_false")
     parser.add_argument("--manage-session", dest="manage_session", action="store_true", default=None)
     parser.add_argument("--no-manage-session", dest="manage_session", action="store_false")
+    parser.add_argument("--runtime-strict", dest="runtime_strict", action="store_true", default=None)
+    parser.add_argument("--no-runtime-strict", dest="runtime_strict", action="store_false")
     parser.add_argument("--print-command", action="store_true", help="只打印最终命令，不执行")
     args = parser.parse_args()
 
@@ -287,13 +331,25 @@ def main() -> int:
     env_path = resolve_env_path(env_file, WORKSPACE_ROOT)
     env_payload = load_env_payload(env_path)
     common = build_common_args(args, task, env_payload, str(env_path))
+    online_stress_task = is_online_stress_task(task)
 
-    if not common["tag"] and not runner.get("allow_all_scenarios", False):
+    if not online_stress_task and not common["tag"] and not runner.get("allow_all_scenarios", False):
         raise SystemExit("任务文件没有指定 scenario.tag；如需跑全量，请在 runner.allow_all_scenarios=true 后再执行。")
 
     allow_side_effects = resolve_bool(args.allow_side_effects, execution.get("allow_side_effects"), policy.get("allow_side_effects"))
     manage_session = resolve_bool(args.manage_session, execution.get("manage_session"), policy.get("manage_session"))
+    runtime_strict = resolve_bool(args.runtime_strict, execution.get("runtime_strict"), policy.get("runtime_strict"))
     compile_first = resolve_bool(args.compile_first, runner.get("compile_first"))
+
+    if online_stress_task:
+        if not allow_side_effects:
+            raise SystemExit("在线压测会占用串口/声卡/云端，任务或命令行必须设置 allow_side_effects=true。")
+        stress_cmd = build_online_stress_command(args, task, str(env_path))
+        if args.print_command:
+            print("$ " + quote_cmd(stress_cmd))
+            return 0
+        run_and_echo(stress_cmd)
+        return 0
 
     compiled_plan = ""
     if compile_first:
@@ -303,7 +359,7 @@ def main() -> int:
         else:
             compiled_plan = run_and_echo(compile_cmd, capture_plan_path=True)
 
-    run_cmd = build_run_command(common, compiled_plan, allow_side_effects, manage_session)
+    run_cmd = build_run_command(common, compiled_plan, allow_side_effects, manage_session, runtime_strict)
     if args.print_command:
         print("$ " + quote_cmd(run_cmd))
         return 0

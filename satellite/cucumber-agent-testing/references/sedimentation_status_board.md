@@ -1,4 +1,4 @@
-# Polaris 沉淀状态板
+﻿# Polaris 沉淀状态板
 
 ## 已固化
 
@@ -9,7 +9,7 @@
 | `references/sedimentation_batch1_registry_draft.json` | 第一批 14 个能力 contract 草案 |
 | `references/sedimentation_registry_extensions.static.json` | 可审阅的静态 registry extension |
 | `references/polaris_sedimentation_batch1_feature_draft.md` | Cucumber 场景草案 |
-| `scripts/ingest_requirements_corpus.py` | 从 `doc/requirements/` 抽取命令词/自由说/在线语料 |
+| `scripts/ingest_requirements_corpus.py` | 从 `docs/requirements/` 抽取命令词/自由说/在线语料 |
 | `scripts/discover_interrupt_prerequisites.py` | 生成天气/播歌/离线最长播报打断前置候选 |
 | `scripts/build_sedimentation_registry_draft.py` | 将能力草案和语料 corpus 转为 registry extension |
 | `scripts/run_sedimentation_pipeline.py` | 一键编排需求抽取、打断候选、registry draft 生成 |

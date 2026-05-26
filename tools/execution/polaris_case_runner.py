@@ -100,6 +100,7 @@ def run_playback(
         cmd.extend(["--device-key", device_key])
     if skip_probe:
         cmd.append("--skip-probe")
+    started_at = datetime.now()
     completed = subprocess.run(
         cmd,
         cwd=str(workspace_root()),
@@ -109,6 +110,7 @@ def run_playback(
         errors="replace",
         timeout=playback_timeout_seconds(audio_file),
     )
+    finished_at = datetime.now()
     (execution_dir / f"{log_prefix}_stdout.log").write_text(completed.stdout, encoding="utf-8")
     (execution_dir / f"{log_prefix}_stderr.log").write_text(completed.stderr, encoding="utf-8")
     (execution_dir / f"{log_prefix}_command.json").write_text(
@@ -118,10 +120,39 @@ def run_playback(
                 "returncode": completed.returncode,
                 "device_key": device_key,
                 "playback_device": playback_device_label(device_key),
+                "process_started_at": started_at.isoformat(timespec="milliseconds"),
+                "playback_started_at": started_at.isoformat(timespec="milliseconds"),
+                "finished_at": finished_at.isoformat(timespec="milliseconds"),
             },
             ensure_ascii=False,
             indent=2,
         ),
+        encoding="utf-8",
+    )
+    runtime_events = [
+        {
+            "timestamp": started_at.isoformat(timespec="milliseconds"),
+            "event_type": "AudioInjected",
+            "payload": {
+                "audio_file": str(audio_file),
+                "device_key": device_key,
+                "log_prefix": log_prefix,
+                "timestamp_source": "process_started_at",
+            },
+        },
+        {
+            "timestamp": finished_at.isoformat(timespec="milliseconds"),
+            "event_type": "AudioCompleted",
+            "payload": {
+                "audio_file": str(audio_file),
+                "device_key": device_key,
+                "log_prefix": log_prefix,
+                "returncode": completed.returncode,
+            },
+        },
+    ]
+    (execution_dir / f"{log_prefix}_runtime_events.jsonl").write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in runtime_events) + "\n",
         encoding="utf-8",
     )
     return completed

@@ -1,4 +1,4 @@
-{
+﻿{
   "framework": {
     "name": "Polaris Cucumber Agent Testing",
     "mode": "BDD + Agent Testing",
@@ -8,7 +8,7 @@
   "defaults": {
     "wake_word": "小美小美",
     "command_text": "打开空调",
-    "command_file": "doc/fa2命令词.txt",
+    "command_file": "docs/fa2命令词.txt",
     "device_key": "",
     "wifi_ssid": "",
     "wifi_password": "12345678",

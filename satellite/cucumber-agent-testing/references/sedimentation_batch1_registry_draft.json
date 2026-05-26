@@ -1,4 +1,4 @@
-{
+﻿{
   "version": 1,
   "status": "draft_ready_for_local_generation",
   "purpose": "第一批可沉淀测试能力草案；先固化功能意图、动作、断言、归因和资料缺口，后续由脚本生成 registry extension。",
@@ -7,8 +7,8 @@
     "satellite/voice-test-plan-designer/references/测试项配置.json",
     "satellite/voice-test-plan-designer/references/执行方法模板.md",
     "satellite/voice-test-plan-designer/references/测试数据设计模板.md",
-    "doc/requirements",
-    "doc/fa2命令词.txt"
+    "docs/requirements",
+    "docs/fa2命令词.txt"
   ],
   "global_evidence": {
     "serial_ports": {
@@ -105,7 +105,7 @@
       "test_items": ["全命令覆盖", "基础命令词识别率"],
       "level": "L1",
       "intent": "从需求文档抽取命令词全集，与可播放/可执行测试集比对，输出覆盖率和缺失项。",
-      "data_sources": ["doc/requirements", "doc/fa2命令词.txt", "requirements_corpus"],
+      "data_sources": ["docs/requirements", "docs/fa2命令词.txt", "requirements_corpus"],
       "actions": [
         "extract_command_candidates_from_requirements",
         "normalize_command_phrases",
@@ -130,7 +130,7 @@
       "test_items": ["短词/长词/数字类指令", "停顿/连读/语速"],
       "level": "L1_L2",
       "intent": "按文本长度、数字参数、语速/停顿标签拆分命令词专项结果，避免整体识别率掩盖局部问题。",
-      "data_sources": ["requirements_corpus", "doc/fa2命令词.txt", "synthetic_variants"],
+      "data_sources": ["requirements_corpus", "docs/fa2命令词.txt", "synthetic_variants"],
       "actions": [
         "classify_short_long_numeric_commands",
         "generate_pause_or_speed_variant_tasks",
@@ -155,7 +155,7 @@
       "test_items": ["离线 oneshot"],
       "level": "L1_L2",
       "intent": "构造唤醒词和离线命令词短间隔任务，按唤醒失败、命令未识别、命令识别错误、执行异常拆分失败原因。",
-      "data_sources": ["configured_wake_audio", "requirements_corpus", "doc/fa2命令词.txt", "synthetic_oneshot_interval_tasks"],
+      "data_sources": ["configured_wake_audio", "requirements_corpus", "docs/fa2命令词.txt", "synthetic_oneshot_interval_tasks"],
       "actions": [
         "build_or_select_oneshot_audio_by_interval",
         "play_oneshot_audio",
@@ -180,7 +180,7 @@
       "test_items": ["打断唤醒", "识别打断", "自激", "全双工识别打断场景"],
       "level": "L1_L3",
       "intent": "自动寻找可稳定进入自播状态的前置：优先联网查天气/播歌，其次扫描离线命令播报时长，选择最长播报作为打断前置。",
-      "data_sources": ["online_weather_or_music_commands", "doc/fa2命令词.txt", "serial_tts_markers"],
+      "data_sources": ["online_weather_or_music_commands", "docs/fa2命令词.txt", "serial_tts_markers"],
       "actions": [
         "ensure_online_when_needed",
         "try_weather_query",
@@ -206,7 +206,7 @@
       "test_items": ["全意图覆盖", "全量覆盖率测试", "高频说法识别率", "非高频说法识别率", "纯 slot 说法"],
       "level": "L1_L2",
       "intent": "从需求文档抽取自由说意图、slot、核心说法和长尾说法，先完成覆盖率与 oracle 草案。",
-      "data_sources": ["doc/requirements", "requirements_corpus"],
+      "data_sources": ["docs/requirements", "requirements_corpus"],
       "actions": [
         "extract_free_speech_candidates",
         "infer_intent_and_slot_columns",

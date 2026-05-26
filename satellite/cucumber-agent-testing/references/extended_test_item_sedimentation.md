@@ -1,4 +1,4 @@
-# Polaris 扩展测试项沉淀清单
+﻿# Polaris 扩展测试项沉淀清单
 
 本文结合：
 
@@ -6,20 +6,20 @@
 - `satellite/voice-test-plan-designer/references/测试项配置.json`
 - `satellite/voice-test-plan-designer/references/执行方法模板.md`
 - `satellite/voice-test-plan-designer/references/测试数据设计模板.md`
-- `doc/requirements/` 需求文档目录
+- `docs/requirements/` 需求文档目录
 
 目标是把测试项先沉淀为 Cucumber/Agent Testing 可执行前的知识层：功能意图、可自处理资料、仍需用户补充资料、断言证据、失败归因。
 
 ## 分级说明
 
 - `L0 已落地执行`：已有 Cucumber/脚本闭环，可继续扩展统计和压测。
-- `L1 可立即沉淀`：不依赖新增物理 rig；可先写 contract、step、action、assertion，部分数据可从 `doc/requirements` 抽取或由脚本合成。
+- `L1 可立即沉淀`：不依赖新增物理 rig；可先写 contract、step、action、assertion，部分数据可从 `docs/requirements` 抽取或由脚本合成。
 - `L2 可沉淀但需资料`：需要词表、期望意图/slot、阈值或测试集；可先沉淀框架和数据导入规则。
 - `L3 可沉淀但需环境/能力`：需要多设备、DOA、低功耗、噪声场、人工喊测等环境或设备能力确认。
 
 ## 可自处理资料策略
 
-- 命令词/自由说/在线语料：优先从 `doc/requirements/` 中的 xlsx/csv/txt/md/docx 抽取。
+- 命令词/自由说/在线语料：优先从 `docs/requirements/` 中的 xlsx/csv/txt/md/docx 抽取。
 - 语料扩展：可自动生成文本变体，如前缀、后缀、插入语、停顿标签、oneshot 间隔任务单。
 - 打断前置：可自动探索两条路径：
   - 在线路径：联网后查天气、播歌或触发长 TTS，让设备进入自播状态。
@@ -61,7 +61,7 @@
 
 | 测试项 | 等级 | 我可沉淀/自处理 | 仍需用户提供或确认 |
 | --- | --- | --- | --- |
-| 基础命令词识别率 | L0/L1 | 先唤醒再播命令、正确/拒识/串扰/动作异常统计；可从 `doc/requirements` 抽取词表 | 期望动作/意图 oracle、正式阈值 |
+| 基础命令词识别率 | L0/L1 | 先唤醒再播命令、正确/拒识/串扰/动作异常统计；可从 `docs/requirements` 抽取词表 | 期望动作/意图 oracle、正式阈值 |
 | 全命令覆盖 | L0/L1 | 命令全集抽取、覆盖率、缺失项、样本不足检查 | 产品应覆盖命令全集是否以需求文档为准 |
 | 命令词反集误识别 | L2 | 反集导入/候选生成、不得识别成命令、误触发统计 | 正式反集、误识别率/误触发率上限 |
 | 命令词集外误识别 | L2 | 集外候选生成、不得命中正式命令、误触发清单 | 集外语料确认、负向边界 |

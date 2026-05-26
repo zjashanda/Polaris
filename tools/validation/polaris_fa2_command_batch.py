@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from pathlib import Path
 import sys
 
@@ -24,7 +24,7 @@ from tools.execution.polaris_doc_case_runner import collect_metrics
 
 
 LISTENAI_PLAY_SCRIPT = Path(r"C:\Users\Administrator\.codex\skills\listenai-play\scripts\listenai_play.py")
-DEFAULT_COMMAND_FILE = Path("doc") / "fa2命令词.txt"
+DEFAULT_COMMAND_FILE = Path("docs") / "fa2命令词.txt"
 DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 KEY_MARKERS = (

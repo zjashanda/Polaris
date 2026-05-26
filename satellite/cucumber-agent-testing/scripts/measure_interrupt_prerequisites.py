@@ -793,7 +793,7 @@ def resolve_batch_dir(args: argparse.Namespace, output_dir: Path) -> Tuple[Optio
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Measure interrupt prerequisite self-play duration from FA2 evidence.")
     parser.add_argument("--candidate-file", type=Path, default=None)
-    parser.add_argument("--command-file", type=Path, default=Path("doc") / "fa2命令词.txt")
+    parser.add_argument("--command-file", type=Path, default=Path("docs") / "fa2命令词.txt")
     parser.add_argument("--fa2-dir", default="", help="直接分析指定 FA2 batch artifact 目录")
     parser.add_argument("--run-dir", default="", help="分析指定 Cucumber run_dir 下最新 FA2 batch")
     parser.add_argument("--run-batch", action="store_true", help="先执行真实 FA2 候选批量播放，再测量自播时长")

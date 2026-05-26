@@ -51,7 +51,7 @@
     "stress_rounds": 100
   },
   "paths": {
-    "command_file": "doc/fa2命令词.txt",
+    "command_file": "docs/fa2命令词.txt",
     "debug_root": "satellite/cucumber-agent-testing/debug",
     "result_root": "result"
   }

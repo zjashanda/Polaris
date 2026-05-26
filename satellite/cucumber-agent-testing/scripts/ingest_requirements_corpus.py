@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
-"""Extract command/free-speech candidates from doc/requirements.
+﻿# -*- coding: utf-8 -*-
+"""Extract command/free-speech candidates from docs/requirements.
 
 This script is intentionally conservative: it builds a reviewable corpus and
 task matrix, but it does not treat generated negative samples as final oracle.
@@ -19,7 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT = ROOT / "doc" / "requirements"
+DEFAULT_INPUT = ROOT / "docs" / "requirements"
 DEFAULT_OUTPUT_ROOT = ROOT / "satellite" / "cucumber-agent-testing" / "debug" / "requirements_corpus"
 
 

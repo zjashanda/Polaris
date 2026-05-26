@@ -220,7 +220,7 @@ WS63/AP+WiFi 项目使用 `polaris.local.json` 中的 `projects.venusws63`，重
 
 ```json
 "paths": {
-  "command_file": "doc/fa2命令词.txt",
+  "command_file": "docs/fa2命令词.txt",
   "debug_root": "satellite/cucumber-agent-testing/debug",
   "result_root": "result"
 }
@@ -242,7 +242,7 @@ WS63/AP+WiFi 项目使用 `polaris.local.json` 中的 `projects.venusws63`，重
   "runner": { "mode": "dry-run" },
   "environment": { "env_file": "polaris.local.json" },
   "inputs": {
-    "command_file": "doc/fa2命令词.txt",
+    "command_file": "docs/fa2命令词.txt",
     "command_limit": 20
   },
   "execution": {

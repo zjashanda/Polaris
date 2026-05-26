@@ -1,12 +1,12 @@
-# Polaris Cucumber 沉淀执行计划
+﻿# Polaris Cucumber 沉淀执行计划
 
-本文件用于回答“为什么停了”之后的继续执行记录：先把可离线固化的能力写成可审阅的 registry 设计，再等待命令执行环境恢复后从 `doc/requirements/` 自动抽取语料并执行验证。
+本文件用于回答“为什么停了”之后的继续执行记录：先把可离线固化的能力写成可审阅的 registry 设计，再等待命令执行环境恢复后从 `docs/requirements/` 自动抽取语料并执行验证。
 
 ## 当前策略
 
 1. 不等待用户再补资料，优先使用现有资料：
-   - `doc/requirements/` 中的需求文档。
-   - `doc/fa2命令词.txt`。
+   - `docs/requirements/` 中的需求文档。
+   - `docs/fa2命令词.txt`。
    - `satellite/voice-test-plan-designer/` 的测试项知识库。
    - 当前本地串口、声卡、热点、COM15 配置。
 2. 用户资料有限时，允许先生成候选语料：

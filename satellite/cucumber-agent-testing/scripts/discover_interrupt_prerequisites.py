@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Build interrupt prerequisite candidates.
 
 The script prepares a reviewable list of self-play prerequisites for wake or
@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BASE = ROOT / "satellite" / "cucumber-agent-testing"
 DEFAULT_CORPUS_ROOT = BASE / "debug" / "requirements_corpus"
 DEFAULT_OUTPUT_ROOT = BASE / "debug" / "interrupt_prerequisites"
-DEFAULT_FA2 = ROOT / "doc" / "fa2命令词.txt"
+DEFAULT_FA2 = ROOT / "docs" / "fa2命令词.txt"
 
 
 ONLINE_CANDIDATES = [

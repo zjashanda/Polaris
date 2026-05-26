@@ -7,6 +7,8 @@
 - 执行时不依赖大模型、不依赖网络生成脚本；clone 仓库后按配置文件即可运行。
 - 默认 `plan-only` / `dry-run` 不占用串口、不播放音频；真机执行必须显式允许 side effects。
 
+完整测试项、断言口径、Cucumber 用例写法和方案读取流程见 `../../docs/skill/supported-test-items-cucumber-guide.md`。
+
 ## 30 秒上手
 
 在仓库根目录执行：
@@ -131,12 +133,16 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 | `cloud.api_environment` | API 场景必填 | 云端 API 环境，必须匹配设备端环境 | `uat` / `sit` |
 | `cloud.device_env_command` | API 场景必填 | 切换设备端 CSK/AP 环境的串口命令 | `flash.set.int env@1` |
 | `cloud.device_id` | API 场景按需 | API 使用的 deviceId/IoT ID；能自动 `deviceinfo` 时可留空 | `210006741088068` |
-| `paths.command_file` | 命令词场景必填 | 命令词文件路径 | `doc/fa2命令词.txt` |
+| `paths.command_file` | 命令词场景必填 | 命令词文件路径 | `docs/fa2命令词.txt` |
 | `timeouts.observe_ms` | 是 | 每轮触发后观察串口窗口 | `15000` |
 | `timeouts.recognition_timeout_s` | 识别模式相关 | 识别模式超时时间 | `15` |
 | `timeouts.half_duplex_timeout_s` | 半双工相关 | 半双工窗口/超时口径 | `15` |
 | `timeouts.full_duplex_timeout_s` | 全双工相关 | 全双工窗口/超时口径 | `60` |
 | `timeouts.timing_guard_ms` | 边界时序建议 | 避开唤醒播报和超时临界点的保护时间 | `1200` |
+| `timeouts.wake_cluster_gap_ms` | Runtime 唤醒聚类 | 多端 wake marker 合并为一次物理唤醒的最大间隔 | `2500` |
+| `timeouts.interrupt_guard_ms` | 打断相关 | 注入点距离自播 start/end 的保护时间 | `600` |
+| `timeouts.post_injection_ms` | 打断相关 | 注入后观察 wake/ASR/命令证据的窗口 | `5000` |
+| `timeouts.post_recovery_ms` | 联网恢复相关 | 恢复在线后观察在线语音闭环的窗口 | `60000` |
 
 更详细说明见 `docs/configuration.md`。
 
@@ -164,13 +170,46 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 ```json
 {
   "inputs": {
-    "command_file": "doc/fa2命令词.txt",
+    "command_file": "docs/fa2命令词.txt",
     "command_limit": 20
   }
 }
 ```
 
 新功能第一次接入，请从 `tasks/templates/new_feature.template.json` 复制，先补齐功能意图、前置、动作、期望证据和失败归因，再沉淀到正式 feature/mapping/registry。
+
+## 在线混合压测
+
+在线混合压测已从临时 debug 脚本迁移到正式入口：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py `
+  --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.example.json `
+  --print-command
+```
+
+确认命令无误后去掉 `--print-command` 执行。该任务会占用串口、声卡和云端链路，任务文件中必须显式设置 `allow_side_effects=true`。
+
+示例任务默认只跑 10 轮，适合新环境冒烟；需要整晚压测时，把任务文件里的 `execution.max_rounds` 改为 `0`，并填写未来的 `execution.end_at`，例如 `2026-05-27T08:30:00`。WB01 使用 `tasks/examples/online_mixed_stress.example.json`；WS63/AP+WiFi 使用 `tasks/examples/online_mixed_stress.ws63.example.json`，或把任意任务中的 `environment.project` 改成 `venusws63`。
+
+相关文件：
+
+- `scripts/run_online_mixed_stress.py`：正式压测 runner。
+- `scripts/analyze_online_stress.py`：压测异常归因分析。
+- `references/scene_strategy_pool.json`：加权随机策略和语料池。
+- `tasks/examples/online_mixed_stress.example.json`：可复制任务配置。
+- `tasks/examples/online_mixed_stress.ws63.example.json`：WS63 无 CP 项目的可复制任务配置。
+
+执行产物默认写入 `satellite/cucumber-agent-testing/debug/online_mixed_stress/<timestamp>/`，包括完整串口日志、`rounds.csv`、逐轮 `result.json`、实时心跳和最终报告。运行结束后可执行：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\analyze_online_stress.py `
+  --run-dir satellite\cucumber-agent-testing\debug\online_mixed_stress\<timestamp>
+```
+
+当前媒体响应校验是“日志证据优先”：runner 会同时看在线 ASR/云端回复、`audioBroadcast`、TTS URL、player play/stop/complete、HTTP/media error、reboot/crash。能证明设备进入播放链路但出现 HTTP/媒体错误时标记 `WARN_MEDIA_ERROR`，完全没有播放证据才按媒体链路失败继续归因。没有接入声卡回采/麦克风回录前，框架不能证明扬声器真实出声质量，只能证明设备日志侧已经或未进入媒体播放链路。
+
+压测和 Runtime 都会记录“额外识别结果”：包括窗口内出现的 wake marker、在线/离线 ASR 文本、CP `WAKE(0)` 关键词、AP algo keyword。在线压测会把这些写入 `rounds.csv` 和逐轮 `result.json` 的 `asr_texts`、`command_keywords`、`expected_utterances`、`unexpected_asr_texts`；如果 ASR 文本与本轮播放语料不匹配，会输出 `WARN_UNEXPECTED_RECOGNITION`，按误识别/串音/上轮自播残留复核。误唤醒场景中任何 wake、ASR 或 command 事件都会作为 Runtime FAIL，而不是只看 wake marker。
 
 ## 已支持 tag
 
@@ -198,6 +237,20 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 | `false_wake_human_speech_smoke` | 合成人声干扰误唤醒 |
 | `false_wake_white_noise_smoke` | 白噪声误唤醒 |
 
+截至 2026-05-25，以上 21 个 tag 均已接入 Event Runtime 旁路 replay；`bdd_run_summary.json` 会同时输出 BDD 结果和 `runtime_replay` 事件断言结果。半/全双工已接入独立 profile，会读取 `judge.json` 中的云端配置应用、timeout 刷新值和成功响应证据。
+
+默认情况下 Runtime 只作为旁路证据，不改写 BDD 主结果。需要把 Runtime 非 PASS 结果升级为主判定时，增加：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run <run_dir> --runtime-strict
+```
+
+或在 task 的 `execution.runtime_strict=true` 后通过 `run_task.py` 执行。建议先用于回放/复核，确认 profile 稳定后再用于正式门禁。
+
+`--runtime-strict` 的含义是：BDD 原结果仍会保留到 `bdd_result_without_runtime`；如果 Runtime profile 输出 `FAIL`/`ERROR`/`BLOCKED`/`TIMING_AMBIGUOUS`，最终场景结果会按 Runtime 升级后的结果输出。当前已用真机 PASS run 验证该开关不会导致 PASS 场景回归；建议先在 summarize/replay 阶段启用，再逐步用于正式执行。
+
+Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
+
 ## 新功能怎么接入
 
 1. 在 `features/polaris_voice_core.feature` 写场景和 tag。
@@ -207,4 +260,6 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 5. 先跑 `dry-run`，再真机小样本，最后再做压测或全量。
 
 原则：自然语言用例可以变，但只要落在已注册的功能意图和 step/action/assertion 上，脚本就不需要大模型实时改代码。
+
+如果新功能来自新的项目资料、外部测试方案或类似 `voice-test-plan-designer` 的 skill，先不要直接改本目录。先把资料放到根目录 `docs/intake/<project_id>/<YYYYMMDD_topic>/`，填写 `learning_manifest.json`。学习和缺口分析完成后，再把可执行部分沉淀到本目录的 feature/reference/task/runtime。
 

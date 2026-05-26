@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """轻量 Cucumber/Gherkin 计划生成器。
 
@@ -28,6 +28,12 @@ WORKSPACE_ROOT = SCRIPT_DIR.parents[2]
 DEFAULT_FEATURE = BDD_ROOT / "features" / "polaris_voice_core.feature"
 DEFAULT_MAPPING = BDD_ROOT / "references" / "voice_core_mapping.json"
 DEFAULT_DEBUG_ROOT = BDD_ROOT / "debug"
+if str(BDD_ROOT) not in sys.path:
+    sys.path.insert(0, str(BDD_ROOT))
+
+from runtime.capabilities import infer_from_env_file, infer_from_project_name  # noqa: E402
+from runtime.replay import build_replay_package  # noqa: E402
+
 STEP_PREFIXES = (
     "假如 ",
     "当 ",
@@ -40,6 +46,29 @@ STEP_PREFIXES = (
     "And ",
     "But ",
 )
+RUNTIME_PROFILE_BY_SCENARIO = {
+    "first_wake": "first_wake",
+    "recognition_mode_wake": "recognition_mode_wake",
+    "half_duplex_recognition": "half_duplex_recognition",
+    "full_duplex_recognition": "full_duplex_recognition",
+    "basic_command_recognition": "basic_command",
+    "requirement_command_smoke": "basic_command",
+    "requirement_free_speech_smoke": "command_batch_exploratory",
+    "interrupt_prerequisite_measurement": "interrupt_prerequisite_measurement",
+    "wake_interrupt": "wake_interrupt",
+    "command_interrupt": "command_interrupt",
+    "network_recovery_basic": "network_recovery_basic",
+    "offline_oneshot_matrix": "offline_oneshot_matrix",
+    "online_oneshot_matrix": "online_oneshot_matrix",
+    "wake_latency_smoke": "wake_matrix",
+    "continuous_wake_smoke": "wake_matrix",
+    "random_interval_wake_smoke": "wake_matrix",
+    "online_vad_special_smoke": "online_vad_special",
+    "false_wake_quiet_basic": "false_wake_quiet",
+    "false_wake_human_speech_smoke": "false_wake_playback",
+    "false_wake_white_noise_smoke": "false_wake_playback",
+    "attribution_validator_smoke": "attribution_validator",
+}
 
 
 @dataclass
@@ -230,7 +259,7 @@ def resolve_context(args: argparse.Namespace, mapping: Dict[str, Any], run_dir: 
         args.command_file,
         defaults.get("command_file", ""),
         nested(env_payload, "paths", "command_file"),
-        "doc/fa2命令词.txt",
+        "docs/fa2命令词.txt",
     )
     observe_ms = first_non_empty(args.observe_ms, defaults.get("observe_ms", ""), nested(env_payload, "timeouts", "observe_ms"), "15000")
     command_limit = first_non_empty(args.command_limit, defaults.get("command_limit", ""), nested(env_payload, "limits", "command_limit"), "20")
@@ -1080,6 +1109,90 @@ def summarize_scenario(run_dir: Path, plan: ScenarioPlan) -> Dict[str, Any]:
     return item
 
 
+def runtime_profile_for_plan(plan: ScenarioPlan) -> str:
+    return RUNTIME_PROFILE_BY_SCENARIO.get(plan.scenario_id, "")
+
+
+def execution_context_from_run(run_dir: Path) -> Dict[str, Any]:
+    payload = read_json_safe(run_dir / "execution_plan.json") or {}
+    context = payload.get("context", {})
+    return context if isinstance(context, dict) else {}
+
+
+def resolve_env_file_from_run(run_dir: Path) -> Path:
+    context = execution_context_from_run(run_dir)
+    env_file = str(context.get("env_file", "") or "")
+    if env_file:
+        path = Path(env_file)
+        if not path.is_absolute():
+            path = WORKSPACE_ROOT / path
+        return path
+    return resolve_env_path("", WORKSPACE_ROOT)
+
+
+def runtime_capabilities_from_run(run_dir: Path) -> tuple[str, Dict[str, Any]]:
+    context = execution_context_from_run(run_dir)
+    env_file = resolve_env_file_from_run(run_dir)
+    project = ""
+    capabilities: Dict[str, Any] = {}
+    try:
+        if env_file.exists():
+            project, capabilities = infer_from_env_file(env_file)
+    except Exception:
+        project, capabilities = "", infer_from_project_name("")
+    cp_port = str(context.get("cp_port", "") or "").strip()
+    asr_port = str(context.get("asr_port", "") or "").strip()
+    if "cp_port" in context:
+        capabilities["cp_log"] = bool(cp_port)
+    if "asr_port" in context:
+        capabilities["asr_log"] = bool(asr_port)
+    return project, capabilities or infer_from_project_name(project)
+
+
+def build_runtime_sidecars(run_dir: Path, plans: List[ScenarioPlan]) -> Dict[str, Dict[str, Any]]:
+    project, capabilities = runtime_capabilities_from_run(run_dir)
+    sidecars: Dict[str, Dict[str, Any]] = {}
+    for plan in plans:
+        profile = runtime_profile_for_plan(plan)
+        if not profile:
+            continue
+        out_dir = run_dir / "runtime_replay" / plan.scenario_id
+        try:
+            package = build_replay_package(
+                input_dir=run_dir,
+                out_dir=out_dir,
+                profile=profile,
+                project=project,
+                capabilities=capabilities,
+            )
+            assertion_summary = dict(package.get("assertion_summary", {}))
+            sidecars[plan.scenario_id] = {
+                "profile": profile,
+                "project": project,
+                "capabilities": capabilities,
+                "result": assertion_summary.get("result", "UNKNOWN"),
+                "event_count": package.get("timeline", {}).get("event_count", 0),
+                "event_counts": package.get("timeline", {}).get("event_counts", {}),
+                "assertion_summary": assertion_summary,
+                "replay_dir": rel(out_dir),
+                "report_path": rel(out_dir / "runtime_replay_report.md"),
+            }
+        except Exception as exc:
+            sidecars[plan.scenario_id] = {
+                "profile": profile,
+                "project": project,
+                "capabilities": capabilities,
+                "result": "ERROR",
+                "event_count": 0,
+                "event_counts": {},
+                "error": str(exc),
+                "replay_dir": rel(out_dir),
+            }
+    if sidecars:
+        write_json(run_dir / "runtime_replay_summary.json", sidecars)
+    return sidecars
+
+
 def render_value(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
@@ -1098,17 +1211,22 @@ def render_bdd_report(run_dir: Path, summary: Dict[str, Any]) -> str:
         "",
         "## 场景结论",
         "",
-        "| 场景 | 结果 | 归因 | 关键原因 | 证据 |",
-        "|---|---|---|---|---|",
+        "| 场景 | 结果 | Runtime | 归因 | 关键原因 | 证据 |",
+        "|---|---|---|---|---|---|",
     ]
     for item in summary.get("scenario_results", []):
         reason = str(item.get("reason", "")).replace("\n", " ")
         if len(reason) > 120:
             reason = reason[:117] + "..."
+        runtime = item.get("runtime_replay", {})
+        runtime_text = ""
+        if runtime:
+            runtime_text = f"{runtime.get('result', 'UNKNOWN')} / {runtime.get('event_count', 0)} events"
         lines.append(
-            "| {name} | `{result}` | `{attr}` | {reason} | `{path}` |".format(
+            "| {name} | `{result}` | `{runtime}` | `{attr}` | {reason} | `{path}` |".format(
                 name=item.get("mapping_title") or item.get("scenario_name"),
                 result=item.get("result", "UNKNOWN"),
+                runtime=runtime_text,
                 attr=item.get("attribution", ""),
                 reason=reason.replace("|", "\\|"),
                 path=item.get("evidence_path", ""),
@@ -1123,6 +1241,11 @@ def render_bdd_report(run_dir: Path, summary: Dict[str, Any]) -> str:
                 lines.append(f"- `{name}`：`{render_value(value)}`")
         else:
             lines.append("- 无可用指标。")
+        runtime = item.get("runtime_replay", {})
+        if runtime:
+            lines.append(f"- `runtime_result`：`{runtime.get('result', 'UNKNOWN')}`")
+            lines.append(f"- `runtime_event_count`：`{runtime.get('event_count', 0)}`")
+            lines.append(f"- `runtime_report`：`{runtime.get('report_path', '')}`")
         lines.append("")
     lines.extend(
         [
@@ -1166,8 +1289,39 @@ def load_plans_from_run(run_dir: Path) -> List[ScenarioPlan]:
     return [scenario_plan_from_payload(item) for item in payload.get("plans", [])]
 
 
-def write_bdd_summary(run_dir: Path, plans: List[ScenarioPlan], run_summary: Dict[str, Any]) -> Dict[str, Any]:
+def apply_runtime_strict_result(item: Dict[str, Any]) -> None:
+    runtime = item.get("runtime_replay") or {}
+    runtime_result = str(runtime.get("result", "") or "")
+    if not runtime_result or runtime_result in {"PASS", "PASS_WITH_SKIPPED_TIMING"}:
+        return
+    original = str(item.get("result", "UNKNOWN") or "UNKNOWN")
+    item["bdd_result_without_runtime"] = original
+    item["runtime_strict_applied"] = True
+    if runtime_result in {"FAIL", "ERROR"}:
+        item["result"] = "FAIL"
+        item["attribution"] = "runtime_strict"
+    elif runtime_result == "BLOCKED":
+        item["result"] = "BLOCKED"
+        item["attribution"] = "runtime_strict_blocked"
+    elif runtime_result == "TIMING_AMBIGUOUS":
+        item["result"] = "TIMING_AMBIGUOUS"
+        item["attribution"] = "runtime_strict_timing_ambiguous"
+    else:
+        item["result"] = runtime_result
+        item["attribution"] = "runtime_strict"
+    prefix = f"Runtime strict 将原 BDD={original} 调整为 {item['result']}，runtime={runtime_result}。"
+    item["reason"] = prefix + " " + str(item.get("reason", ""))
+
+
+def write_bdd_summary(run_dir: Path, plans: List[ScenarioPlan], run_summary: Dict[str, Any], *, runtime_strict: bool = False) -> Dict[str, Any]:
     scenario_results = [summarize_scenario(run_dir, plan) for plan in plans]
+    runtime_sidecars = build_runtime_sidecars(run_dir, plans)
+    for item in scenario_results:
+        sidecar = runtime_sidecars.get(str(item.get("scenario_id", "")))
+        if sidecar:
+            item["runtime_replay"] = sidecar
+            if runtime_strict:
+                apply_runtime_strict_result(item)
     counts: Dict[str, int] = {}
     for item in scenario_results:
         result = str(item.get("result", "UNKNOWN") or "UNKNOWN")
@@ -1180,6 +1334,8 @@ def write_bdd_summary(run_dir: Path, plans: List[ScenarioPlan], run_summary: Dic
         "overall_counts": counts,
         "command_execution_results": run_summary.get("execution_results", []),
         "managed_session": run_summary.get("managed_session"),
+        "runtime_strict": runtime_strict,
+        "runtime_replay_summary": runtime_sidecars,
         "scenario_results": scenario_results,
     }
     write_json(run_dir / "bdd_run_summary.json", payload)
@@ -1205,6 +1361,7 @@ def main() -> int:
     parser.add_argument("--wifi-password", default="")
     parser.add_argument("--allow-side-effects", action="store_true", help="execute 模式确认允许占用串口/播放/云端")
     parser.add_argument("--manage-session", action="store_true", help="execute 模式下创建 BDD 专用 session 并自动启动/停止串口 logger")
+    parser.add_argument("--runtime-strict", action="store_true", help="将 Runtime sidecar 非 PASS 结果升级为 bdd_run_summary 主结果；默认只作为旁路证据")
     parser.add_argument("--summarize-run", default="", help="仅解析已有 run_dir 并生成 bdd_run_summary/report，不新建执行")
     parser.add_argument("--compiled-plan", default="", help="执行 compile_feature.py 生成的 compiled_plan.json")
     args = parser.parse_args()
@@ -1213,7 +1370,7 @@ def main() -> int:
         run_dir = Path(args.summarize_run).resolve()
         plans = load_plans_from_run(run_dir)
         run_summary = read_json_safe(run_dir / "run_summary.json") or {"mode": "execute", "execution_results": []}
-        write_bdd_summary(run_dir, plans, run_summary)
+        write_bdd_summary(run_dir, plans, run_summary, runtime_strict=args.runtime_strict)
         print(run_dir / "bdd_run_report.md")
         return 0
 
@@ -1285,7 +1442,7 @@ def main() -> int:
         }
         write_json(run_dir / "run_summary.json", run_summary)
         if args.mode == "execute":
-            write_bdd_summary(run_dir, plans, run_summary)
+            write_bdd_summary(run_dir, plans, run_summary, runtime_strict=args.runtime_strict)
         print(run_dir)
         return 0
 
@@ -1363,7 +1520,7 @@ def main() -> int:
     }
     write_json(run_dir / "run_summary.json", run_summary)
     if args.mode == "execute":
-        write_bdd_summary(run_dir, plans, run_summary)
+        write_bdd_summary(run_dir, plans, run_summary, runtime_strict=args.runtime_strict)
     print(run_dir)
     return 0
 

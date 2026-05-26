@@ -100,13 +100,13 @@
 - `SKILL.md`
 - `docs/skill/capabilities-and-usage.md`
 - `docs/skill/environment-and-migration.md`
-- `config/*.json`
-- `config/*.md`
-- `doc/api/common_request.py`
-- `doc/cases/*.xlsx`
-- `doc/reference/tone.h`
-- `spec/cases/*.yaml`
-- `spec/suites/*.yaml`
+- `polaris.local.example.json`
+- `docs/skill/*.md`
+- `docs/api/common_request.py`
+- `docs/cases/*.xlsx`
+- 历史 tone/reference 如需追溯在 `oldTime/` 中查找，不再放当前根目录
+- Cucumber 用例：`satellite/cucumber-agent-testing/features/*.feature`
+- Cucumber 任务：`satellite/cucumber-agent-testing/tasks/**/*.json`
 - `tools/**/*.py`
 
 ## 4. 当前默认配置

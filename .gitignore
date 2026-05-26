@@ -1,35 +1,23 @@
-﻿# runtime evidence and local state
+# Runtime output
+oldTime/
+satellite/cucumber-agent-testing/debug/
 result/
 cache/
-fw/
 outputs/
-plan.md
-.current_*
-.case_runner.lock
-
-# local machine configuration
-config/polaris_env.json
-config/polaris_local_ports.json
-*.local.json
-
-# Python/cache artifacts
-__pycache__/
-*.pyc
-
-# generated audio
-*.pcm
-*.wav
-*.mp3
-
-# keep runtime-heavy satellite outputs ignored, but publish the reusable Cucumber framework
-!satellite/
-satellite/*
-!satellite/cucumber-agent-testing/
-!satellite/cucumber-agent-testing/**
-satellite/cucumber-agent-testing/debug/*
-!satellite/cucumber-agent-testing/debug/.gitkeep
-satellite/cucumber-agent-testing/**/__pycache__/
-satellite/cucumber-agent-testing/**/*.pyc
-
-# archived local runtime/debug evidence
 _runtime/
+
+# Local machine config
+plan.md
+polaris.local.json
+.current_logger_pid
+.current_result_dir
+
+# Python / tools
+__pycache__/
+*.py[cod]
+*.log
+*.tmp
+
+# Office temp
+~$*.docx
+~$*.xlsx

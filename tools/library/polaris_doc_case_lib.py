@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 from pathlib import Path
 import sys
 
@@ -1587,10 +1587,10 @@ class DocCase:
 
 
 def default_doc_xlsx() -> Path:
-    case_dir = workspace_root() / "doc" / "cases"
+    case_dir = workspace_root() / "docs" / "cases"
     candidates = sorted(case_dir.glob("*.xlsx"))
     if not candidates:
-        legacy = sorted((workspace_root() / "doc").glob("*.xlsx"))
+        legacy = sorted((workspace_root() / "docs").glob("*.xlsx"))
         if legacy:
             return legacy[0]
         raise FileNotFoundError(f"no doc-case xlsx found under {case_dir}")
@@ -1886,8 +1886,10 @@ def classify_doc_case(case: DocCase, env: Optional[dict] = None) -> dict:
 
 
 def parse_tone_catalog(header_path: Optional[Path] = None) -> Dict[int, str]:
-    header_path = header_path or (workspace_root() / "doc" / "reference" / "tone.h")
+    header_path = header_path or (workspace_root() / "docs" / "reference" / "tone.h")
     mapping: Dict[int, str] = {}
+    if not header_path.exists():
+        return mapping
     pattern = re.compile(r"TONE_ID_(\d+)\s*=\s*(\d+),//\s*(.+)")
     with header_path.open("r", encoding="utf-8", errors="replace") as handle:
         for raw in handle:

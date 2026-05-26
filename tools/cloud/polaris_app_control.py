@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 from pathlib import Path
 import sys
 
@@ -20,7 +20,7 @@ from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, qu
 
 ROOT = Path(__file__).resolve().parents[2]
 
-from doc.api.common_request import MideaCloudRequest  # noqa: E402
+from docs.api.common_request import MideaCloudRequest  # noqa: E402
 
 
 FIELD_MAP = {
@@ -227,7 +227,7 @@ def action_set_character_value(request: MideaCloudRequest, args: argparse.Namesp
 def action_proactive_interaction(request: MideaCloudRequest, args: argparse.Namespace) -> Any:
     return request.Proactive_interaction(
         interrupt="True" if args.interrupt else "False",
-        # doc/common_request.py expects the legacy typo "Ture" for truthy flags.
+        # docs/common_request.py expects the legacy typo "Ture" for truthy flags.
         endssion="Ture" if args.end_session else "False",
         tts_long="Ture" if args.tts_long else "False",
     )
