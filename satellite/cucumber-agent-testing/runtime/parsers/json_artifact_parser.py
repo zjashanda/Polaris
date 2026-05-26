@@ -33,6 +33,15 @@ def _json_load(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def _status_event(prefix: str, result: str) -> str:
     normalized = str(result or "").strip().upper()
     if normalized == "PASS":
@@ -58,7 +67,27 @@ def parse_runtime_events_jsonl(path: Path) -> List[ValidationEvent]:
         if not timestamp or not event_type:
             continue
         payload = dict(item.get("payload", {}) or {})
-        events.append(_event_from_timestamp(path, line_no, timestamp, event_type, payload))
+        source = str(item.get("source", "") or "artifact")
+        raw = f"{timestamp} [PC/{source}] {event_type} {json.dumps(payload, ensure_ascii=False, sort_keys=True)}"
+        events.append(
+            make_event(
+                path=path,
+                line_no=line_no,
+                raw=raw,
+                source=source,
+                event_type=event_type,
+                payload=payload,
+                run_id=str(item.get("run_id", "") or ""),
+                scene_id=str(item.get("scene_id", "") or ""),
+                device_id=str(item.get("device_id", "") or ""),
+                plugin=str(item.get("plugin", "") or ""),
+                timestamp_monotonic_ms=_optional_int(item.get("timestamp_monotonic_ms")),
+                severity=str(item.get("severity", "") or ""),
+                tags=[str(tag) for tag in item.get("tags", [])] if isinstance(item.get("tags"), list) else None,
+                parent_event=str(item.get("parent_event", "") or ""),
+                caused_by=str(item.get("caused_by", "") or ""),
+            )
+        )
     return events
 
 

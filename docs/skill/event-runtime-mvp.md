@@ -1,4 +1,4 @@
-﻿# Event Runtime MVP 落地说明
+# Event Runtime MVP 落地说明
 
 本文记录 `embedded_validation_runtime_rearchitecture_plan.md` 的第一阶段落地结果。当前目标不是替换 Cucumber，而是在现有 Cucumber/Registry/Validation Pool 下方增加 deterministic runtime 内核雏形。
 
@@ -144,7 +144,7 @@ python satellite\cucumber-agent-testing\scripts\runtime_replay.py `
 
 ## 2026-05-25 真机全量冒烟
 
-在 `cskwb01` 真机上按 `polaris_voice_core.feature` 将当前 Cucumber 场景全部执行了一次；Jenkins 已明确不纳入当前 skill，本轮不覆盖。
+在 `cskwb01` 真机上按 `polaris_voice_core.feature` 将当前 Cucumber 场景全部执行了一次；外部调度 已明确不纳入当前 skill，本轮不覆盖。
 
 汇总文件：
 

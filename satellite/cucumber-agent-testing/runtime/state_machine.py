@@ -38,6 +38,10 @@ class StateSnapshot:
     event_type: str
     timestamp: str
     timestamp_ms: int | None
+    timestamp_wall: str = ""
+    timestamp_wall_ms: int | None = None
+    timestamp_monotonic_ms: int | None = None
+    plugin: str = ""
 
 
 @dataclass
@@ -57,6 +61,10 @@ class RuntimeStateMachine:
                 event_type=event.event_type,
                 timestamp=event.timestamp,
                 timestamp_ms=event.timestamp_ms,
+                timestamp_wall=event.timestamp_wall,
+                timestamp_wall_ms=event.timestamp_wall_ms,
+                timestamp_monotonic_ms=event.timestamp_monotonic_ms,
+                plugin=event.plugin,
             )
         )
 

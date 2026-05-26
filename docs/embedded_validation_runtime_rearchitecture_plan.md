@@ -43,7 +43,6 @@
 - Validation Pool
 - Failure Attribution
 - Retry
-- Jenkins 调度
 - 场景分析
 - 数据聚类
 
@@ -894,22 +893,12 @@ Runtime：
 
 ---
 
-# 20. Jenkins 与调度系统
+# 20. 本地任务入口与调度系统
 
-## 20.1 Jenkins 只负责入口
+当前 skill 不落地外部调度集成；Runtime 只暴露稳定 CLI/task 入口。
+如后续需要外部调度，也只能调用 CLI 并归档产物，不能参与业务判断。
 
-Jenkins 不参与 Runtime。
-
-只负责：
-
-- 调度
-- 参数注入
-- 定时
-- 固件版本管理
-
----
-
-## 20.2 Scheduler 职责
+## 20.1 Scheduler 职责
 
 Scheduler 负责：
 

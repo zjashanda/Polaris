@@ -993,3 +993,16 @@ validation-platform/
 
 # Embedded Validation Operating System
 
+
+---
+
+# 21. 当前 skill 的执行裁剪
+
+根据当前 Polaris 落地目标，先按以下顺序执行：
+
+1. 已开始落地 Phase 1：Runtime Plugin 化、Event Schema 正式化、Monotonic Timeline。
+2. 下一步再做 Constraint Scene Engine、Resource Runtime、Hierarchical StateMachine。
+3. Replay VM、Simulation Layer、Assertion DSL、Failure Exploration 作为后续增强，不一次性重构。
+4. 外部调度、远程设备池、大规模分布式执行暂不纳入当前 skill。
+
+当前优先目标是：本地真机、Cucumber task、Event Runtime、Replay、断言报告稳定闭环。

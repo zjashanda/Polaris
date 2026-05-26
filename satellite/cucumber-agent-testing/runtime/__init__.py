@@ -17,11 +17,15 @@ from .assertion_engine import (
     evaluate_wake_interrupt,
 )
 from .events import ValidationEvent
+from .kernel import PluginContext, PluginManager, RuntimePlugin
 from .timeline import Timeline
 
 __all__ = [
     "Timeline",
     "ValidationEvent",
+    "PluginContext",
+    "PluginManager",
+    "RuntimePlugin",
     "evaluate_attribution_validator",
     "evaluate_basic_command",
     "evaluate_command_interrupt",

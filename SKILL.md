@@ -68,3 +68,10 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 3. 列出可自动化项、缺口项、需求不明确项。
 4. 资料足够且可验证时，才更新 Cucumber feature、reference registry、task example、Runtime profile 或必要工具。
 5. 资料不足时只沉淀 gap list，不伪造 PASS/FAIL 逻辑。
+
+## Runtime 扩展约束
+
+- 新功能不要直接堆到一个大脚本里；优先进入 `satellite/cucumber-agent-testing/runtime/plugins/` 对应领域插件。
+- 事件统一使用 `ValidationEvent` v1 schema，保留 wall time，但断言以 monotonic timeline 为准。
+- Cucumber 只表达测试意图；执行动作、证据解析、断言逻辑必须落到 registry/runtime/tool 层。
+- 外部调度、远程设备池、大规模聚类暂不纳入当前 skill，当前优先保证本地真机闭环稳定。

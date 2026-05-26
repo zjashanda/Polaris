@@ -1,56 +1,366 @@
 ﻿# Polaris Voice Validation Skill
 
-当前目录只保留优化后的 BDD + Event Runtime 真机验证方案。历史旧方案、运行结果、旧配置、旧脚本和旧资料已整体归档到 `oldTime/`。
+Polaris 是一个面向嵌入式语音设备的本地真机验证 skill。当前仓库已经切换到新的 **Cucumber/BDD + Event Runtime** 方案：用 Cucumber 描述测试意图，用固定 runner 执行动作，用 Event Runtime 把串口、声卡、云控和执行产物统一转换成事件，再由确定性的断言逻辑判断 PASS/FAIL/BLOCKED。
 
-## 快速开始
+本仓库不要求每次执行时联网或依赖大模型生成脚本。新用例只要进入已有的 step/action/assertion registry，后续就可以脱离大模型稳定执行。
+
+## 1. 适合解决什么问题
+
+- 语音唤醒：首次唤醒、识别模式下唤醒、连续唤醒、唤醒率压测。
+- 语音识别：基础命令词、需求命令词、自由说小样本、one-shot 间隔矩阵。
+- 交互模式：半双工识别、全双工识别、识别超时、临界超时保护。
+- 打断验证：设备自播/TTS/媒体播放过程中进行唤醒打断或命令打断。
+- 在线交互压测：基础命令、音乐、相声、新闻、问答、组合场景随机压测。
+- 异常归因：重启、crash、看门狗、误唤醒、误识别、额外识别结果记录。
+- 项目化复用：同一套框架支持 `cskwb01`、`venusws63` 等不同串口拓扑。
+
+## 2. 当前目录结构
+
+```text
+Polaris/
+  README.md                         # 当前文档，新人入口
+  SKILL.md                          # Codex skill 说明，描述必须遵守的工作流
+  AGENTS.md                         # 本仓库 agent 启动规则：每次先读/写 plan.md
+  polaris.local.example.json         # 本机配置模板，提交到 git
+  polaris.local.json                 # 本机真实配置，不提交 git
+  plan.md                            # 本地执行计划和进度，不提交 git
+  .gitignore                         # 忽略本地配置、运行产物、旧归档
+  docs/                              # 文档、需求、命令词、表格、学习入口
+    fa2命令词.txt                    # 默认命令词文件
+    requirements/                    # 需求文档、词表、自由说资料
+    cases/                           # 用例表格资料
+    api/                             # 云控/API 相关辅助代码
+    intake/                          # 新项目/新功能资料导入入口
+    knowledge/                       # 学习后的结构化知识沉淀
+    skill/                           # 当前 skill 设计、能力、落地说明
+  satellite/cucumber-agent-testing/  # Cucumber/BDD + Event Runtime 主体
+    features/                        # Cucumber feature 用例
+    references/                      # step/action/assertion mapping、策略池、能力沉淀
+    tasks/                           # 可直接运行的任务 JSON
+    configs/                         # 旧兼容示例配置；根目录配置优先
+    scripts/                         # run_task/run_cucumber/replay/压测入口脚本
+    runtime/                         # Event Runtime 内核、插件、解析器、断言、replay
+    debug/                           # 运行产物目录，不提交 git
+  tools/                             # 最小工具层：串口、声卡、云控、case runner 支撑
+  oldTime/                           # 旧方案完整归档，不作为当前执行入口
+```
+
+> 当前只保留一个 `docs/` 目录；旧 `doc/`、`config/`、`result/`、`cache/`、`outputs/`、`_runtime/`、`spec/`、`references/` 等混杂入口不再作为新方案入口。
+
+## 3. 框架是怎么工作的
+
+```text
+Cucumber Feature / Task JSON
+        ↓
+run_task.py 读取任务和 polaris.local.json
+        ↓
+compile_feature.py 可选离线编译 step/action/assertion plan
+        ↓
+run_cucumber.py 调用固定动作：串口、声卡、云控、日志采集
+        ↓
+运行产物写入 satellite/cucumber-agent-testing/debug/
+        ↓
+runtime_replay.py / Event Runtime 解析产物为 ValidationEvent
+        ↓
+Timeline + StateMachine + Assertion Engine
+        ↓
+输出 replay_package.json、assertions.json、runtime_replay_report.md
+```
+
+关键原则：
+
+- Cucumber 只表达“要验证什么”，不把复杂判断写进自然语言。
+- runner 只执行已注册的动作，不临时让大模型生成脚本。
+- Runtime 只根据事件和固定断言判断结果，不让大模型决定 PASS/FAIL。
+- 所有 wake/asr/media/network/reboot 等能力逐步走 plugin 化，避免 runtime 变成巨型脚本。
+- 断言用 monotonic timeline 做时序判断，wall clock 只用于报告展示。
+
+## 4. 首次使用步骤
+
+### 4.1 克隆后准备本机配置
 
 ```powershell
 Copy-Item polaris.local.example.json polaris.local.json
 notepad polaris.local.json
+```
+
+只需要优先改这些字段：
+
+| 配置 | 说明 |
+|---|---|
+| `active_project` | 当前连接的项目，例如 `cskwb01` 或 `venusws63`。 |
+| `common.audio.default_playback_device_key` | 指定声卡 key；留空则使用电脑默认声卡。 |
+| `common.device.wake_word` | 当前唤醒词，例如 `小美小美`。 |
+| `common.network.wifi_ssid/password` | 当前测试 Wi-Fi 或热点信息。 |
+| `projects.<项目>.serial.ports` | AP/CP/ASR/上位/控制口 COM 口。 |
+| `projects.<项目>.cloud.api_environment` | 云控环境，常见为 `uat` 或 `sit`。 |
+| `projects.<项目>.cloud.device_env_command` | 设备切换环境命令，必须发到设备支持的串口。 |
+
+### 4.2 WB01 项目最小配置
+
+`cskwb01` 通常是 AP + CP + ASR/WB01 + 控制口四串口：
+
+```json
+{
+  "active_project": "cskwb01",
+  "projects": {
+    "cskwb01": {
+      "serial": {
+        "ports": {
+          "ap": "COM14",
+          "cp": "COM12",
+          "asr": "COM13",
+          "control": "COM15"
+        }
+      },
+      "cloud": {
+        "api_environment": "sit",
+        "device_env": "sit"
+      }
+    }
+  }
+}
+```
+
+注意：如果声卡播放成功但设备无唤醒证据，优先在 `control` 串口执行 PA 前置：
+
+```text
+uut-pa.on
+pa-enable.set 0 17 0 1
+```
+
+这两个命令必须发到控制口，不要发到 AP/CP/ASR 口。
+
+### 4.3 WS63 项目最小配置
+
+`venusws63` 通常是 AP + 上位/WiFi + 控制口三串口，没有独立 CP：
+
+```json
+{
+  "active_project": "venusws63",
+  "projects": {
+    "venusws63": {
+      "serial": {
+        "ports": {
+          "ap": "COM16",
+          "upper": "COM20",
+          "asr": "COM20",
+          "cp": "",
+          "control": "COM17"
+        }
+      },
+      "cloud": {
+        "api_environment": "uat",
+        "device_env": "uat"
+      }
+    }
+  }
+}
+```
+
+WS63 没有 CP 时，`cp` 必须留空；断言会根据 capability 自动降级，不会强行要求 CP 日志。
+
+## 5. 常用执行方式
+
+### 5.1 只打印将要执行的命令
+
+```powershell
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --print-command
 ```
 
-真机执行必须显式允许副作用：
+### 5.2 dry-run 检查流程，不碰真机
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode dry-run
+```
+
+### 5.3 真机执行
+
+真机执行会占用串口、声卡、热点或云控，所以必须显式允许副作用：
 
 ```powershell
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode execute --allow-side-effects --manage-session
 ```
 
-## 当前新方案目录
+### 5.4 先编译 Cucumber 再执行
 
-```text
-README.md                         # 新方案入口
-SKILL.md                          # Codex skill 说明
-polaris.local.example.json         # 本机配置模板
-polaris.local.json                 # 本机真实配置，按需保留，不提交
-satellite/cucumber-agent-testing/  # Cucumber/BDD + Event Runtime 主体
-tools/                             # 新 runner 必需的最小串口/音频/云控工具层
-docs/                              # 说明文档 + 命令词、用例表、API、需求输入资料
-docs/intake/                       # 新项目/新功能资料导入入口
-docs/knowledge/                    # 学习后的结构化沉淀
-docs/skill/                        # 新方案说明和验证口径
-oldTime/                           # 旧方案完整归档，不作为运行入口
+用于验证 feature 是否能通过 registry 固化执行，不依赖临时脚本生成：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --compile-first --mode execute --allow-side-effects --manage-session
 ```
 
-## 重要原则
+### 5.5 在线混合压测
 
-- 新人只改 `polaris.local.json`，不要再到旧 `config/` 里找配置。
-- 执行入口统一走 `satellite/cucumber-agent-testing/scripts/run_task.py` 或 `run_cucumber.py`。
-- 运行产物只写到 `satellite/cucumber-agent-testing/debug/`，不提交 git。
-- Runtime 会记录实际识别文本、命令关键词和额外识别结果；未说却识别到的内容按误唤醒/误识别复核。
-- API/云控前必须确认设备端 CSK/AP 环境与 `polaris.local.json` 里的 `cloud.api_environment` 一致。
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.example.json --mode execute --allow-side-effects
+```
 
-更多说明见：
+WS63 示例：
 
-- `satellite/cucumber-agent-testing/README.md`
-- `satellite/cucumber-agent-testing/docs/configuration.md`
-- `docs/intake/README.md`
-- `docs/skill/event-runtime-mvp.md`
-- `docs/skill/supported-test-items-cucumber-guide.md`
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.ws63.example.json --mode execute --allow-side-effects
+```
 
-## 新项目/新功能怎么让我学习
+### 5.6 对已有日志做 replay 和断言
 
-后续有新项目说明、新功能需求、外部测试方案、类似 `voice-test-plan-designer` 的 skill，统一放到：
+```powershell
+python satellite\cucumber-agent-testing\scripts\runtime_replay.py --input-dir satellite\cucumber-agent-testing\debug\runs\<某次运行目录> --profile first_wake --env-file polaris.local.json
+```
+
+replay 输出默认在：
+
+```text
+satellite/cucumber-agent-testing/debug/runtime_replay/<时间戳>_<profile>/
+```
+
+重点看：
+
+```text
+assertions.json              # 机器可读断言结果
+runtime_replay_report.md     # 人可读报告
+events.json                  # 标准化事件
+timeline.json                # monotonic 时间线
+runtime_state.json           # 状态机结果
+replay_package.json          # 完整 replay 包
+```
+
+## 6. Task JSON 怎么写
+
+推荐先复制 `satellite/cucumber-agent-testing/tasks/examples/` 下的模板。
+
+最小结构如下：
+
+```json
+{
+  "schema": "polaris.task.v1",
+  "runner": {
+    "mode": "dry-run",
+    "compile_first": true,
+    "feature": "satellite/cucumber-agent-testing/features/polaris_voice_core.feature",
+    "mapping": "satellite/cucumber-agent-testing/references/voice_core_mapping.json"
+  },
+  "scenario": {
+    "tag": "first_wake"
+  },
+  "environment": {
+    "env_file": "polaris.local.json"
+  },
+  "inputs": {
+    "command_file": "docs/fa2命令词.txt"
+  },
+  "execution": {
+    "observe_ms": 15000,
+    "manage_session": true,
+    "allow_side_effects": false
+  }
+}
+```
+
+字段含义：
+
+| 字段 | 用途 |
+|---|---|
+| `runner.mode` | `plan-only`、`dry-run`、`execute`。 |
+| `runner.compile_first` | 是否先通过 registry 编译成确定性执行计划。 |
+| `scenario.tag` | 要执行的 Cucumber 场景 tag，例如 `first_wake`。 |
+| `environment.env_file` | 默认使用根目录 `polaris.local.json`。 |
+| `inputs.command_file` | 命令词文件，默认 `docs/fa2命令词.txt`。 |
+| `execution.allow_side_effects` | 真机执行必须为 `true` 或命令行传 `--allow-side-effects`。 |
+| `execution.manage_session` | 是否自动建立/关闭串口日志会话。 |
+
+## 7. 当前已注册测试项
+
+这些 tag 可以通过 task 或 `run_cucumber.py --tag <tag>` 触发：
+
+```text
+first_wake
+recognition_mode_wake
+half_duplex_recognition
+full_duplex_recognition
+basic_command_recognition
+requirement_command_smoke
+requirement_free_speech_smoke
+interrupt_prerequisite_measurement
+wake_interrupt
+command_interrupt
+network_recovery_basic
+offline_oneshot_matrix
+online_oneshot_matrix
+false_wake_quiet_basic
+wake_latency_smoke
+continuous_wake_smoke
+random_interval_wake_smoke
+online_vad_special_smoke
+attribution_validator_smoke
+false_wake_human_speech_smoke
+false_wake_white_noise_smoke
+```
+
+## 8. 断言和归因口径
+
+Runtime 会先把证据转换为标准事件，例如：
+
+```text
+AudioInjected
+WakeDetected
+ASRDetected
+CommandDetected
+TTSStarted
+MediaStarted
+MediaCompleted
+NetworkLost
+NetworkRecovered
+RebootDetected
+CrashDetected
+```
+
+然后按 profile 做断言：
+
+| 结果 | 含义 |
+|---|---|
+| `PASS` | 证据满足功能意图，时序和禁止行为也满足。 |
+| `FAIL` | 有足够证据证明设备行为不符合预期。 |
+| `BLOCKED` | 环境、串口、声卡、云控、日志缺失等导致无法判断。 |
+| `PASS_WITH_SKIPPED_TIMING` | 主功能通过，但部分时序证据不足，只能跳过时序断言。 |
+| `TIMING_AMBIGUOUS` | 临界超时或播报占用导致时序不可稳定归因，需要复核。 |
+
+归因原则：
+
+- 没有发音频却出现 wake/ASR/command，要记录为疑似误唤醒或误识别。
+- 有声卡播放但无任何设备侧证据，优先判为环境/设备链路阻塞，而不是直接判固件失败。
+- 有 AP/ASR 识别但无预期响应，需要结合媒体/TTS/云控事件判断是识别问题、执行问题还是云端问题。
+- 出现 `RebootDetected`、`CrashDetected`、watchdog、panic、hardfault 等标记，要单独进入健康度和稳定性统计。
+
+## 9. Event Runtime Phase 1 结构
+
+当前已开始按高级优化方案做 Phase 1：
+
+```text
+runtime/
+  events.py                # ValidationEvent v1 schema，含 plugin、severity、tags、wall/monotonic 时间
+  timeline.py              # monotonic timeline，断言使用相对单调时间
+  state_machine.py         # 运行状态机
+  assertion_engine.py      # 固化断言逻辑
+  replay.py                # replay package 构建
+  kernel/
+    plugin.py              # RuntimePlugin、PluginManager、PluginContext
+  plugins/
+    wake.py                # 唤醒域插件
+    asr.py                 # ASR/命令识别域插件
+    media.py               # TTS/媒体/打断域插件
+    network.py             # 网络域插件
+    reboot.py              # 重启/crash 域插件
+  parsers/
+    serial_log_parser.py   # 串口/播放日志解析
+    json_artifact_parser.py# 结构化产物解析
+```
+
+后续新功能不要直接塞进一个巨大的 runtime 文件里，优先按领域进入 plugin：wake、asr、media、network、reboot，必要时再新增 plugin。
+
+## 10. 新项目/新功能怎么导入学习
+
+如果后续有新项目说明、新功能需求、外部测试方案、类似 `voice-test-plan-designer` 的资料，统一放到：
 
 ```text
 docs/intake/<project_id>/<YYYYMMDD_topic>/
@@ -58,6 +368,56 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
   raw/
 ```
 
-从 `docs/intake/templates/learning_manifest.template.json` 复制模板，填写本次资料希望我学习什么、有哪些文件、目标是项目 profile、Cucumber 用例、Runtime 断言还是压测策略。
+操作步骤：
 
-我学习后会把结构化理解写到 `docs/knowledge/<project_id>/`，并在资料足够时再沉淀到 `satellite/cucumber-agent-testing/` 的 feature、reference、task 和 runtime。资料不够时只输出缺口清单，不直接伪造可执行能力。
+1. 从 `docs/intake/templates/learning_manifest.template.json` 复制 `learning_manifest.json`。
+2. 把原始资料放入 `raw/`，例如 PDF、Excel、Markdown、日志、旧 skill。
+3. 在 manifest 里写清楚本次目标：项目 profile、功能测试策略、Cucumber 用例、断言逻辑、压测策略或缺口分析。
+4. 我学习后会把结构化理解沉淀到 `docs/knowledge/<project_id>/`。
+5. 资料足够时，再把可执行能力写入 `features/`、`references/`、`tasks/`、`runtime/plugins/` 或 `tools/`。
+
+资料不足时，只输出缺口清单，不伪造可执行能力。
+
+## 11. 哪些文件不要提交
+
+这些只属于本机或运行产物：
+
+```text
+polaris.local.json
+plan.md
+oldTime/
+satellite/cucumber-agent-testing/debug/
+result/
+cache/
+outputs/
+_runtime/
+__pycache__/
+*.log
+*.tmp
+```
+
+## 12. 常见问题
+
+### 声卡播放不生效怎么办
+
+- 如果项目/设备配置里没有填写声卡 key，默认使用电脑默认声卡。
+- 多声卡环境建议用 `laid` 或 `listenai-play` 扫描稳定 key 后填入 `common.audio.default_playback_device_key`。
+- 如果声卡播放成功但设备无唤醒证据，WB01/WS63 可尝试在控制口执行：`uut-pa.on`、`pa-enable.set 0 17 0 1`。
+
+### 云控/API 设置不生效怎么办
+
+- 先确认 `polaris.local.json` 的 `cloud.api_environment` 是 `uat` 还是 `sit`。
+- 再确认设备端 CSK/AP 已切到同一环境。
+- 环境切换命令通常在 `projects.<项目>.cloud.device_env_command` 中配置，切换后可能需要重启。
+
+### 新写 Cucumber 用例为什么还要 registry
+
+Cucumber 是自然语言入口，但真正执行要靠固定的 step/action/assertion registry。这样做的目的是：
+
+- 用例文本可以变，但执行动作和断言逻辑稳定。
+- 执行时不依赖大模型、不依赖网络动态改脚本。
+- 同一功能更换唤醒词、超时时间、声卡、串口后仍能复用。
+
+### 老方案还能用吗
+
+旧方案已归档到 `oldTime/`，只作为历史参考，不作为当前执行入口。当前维护和新增能力都应进入新方案目录。

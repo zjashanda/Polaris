@@ -27,6 +27,8 @@ from .assertion_engine import (
     evaluate_wake_interrupt,
 )
 from .parsers import parse_artifact_tree
+from .kernel import PluginContext, PluginManager
+from .plugins import default_plugins
 from .state_machine import RuntimeStateMachine
 from .timeline import Timeline
 
@@ -152,7 +154,10 @@ def build_replay_package(
     capabilities: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     capabilities = capabilities or {}
-    events = parse_artifact_tree(input_dir)
+    raw_events = parse_artifact_tree(input_dir)
+    plugin_context = PluginContext(profile=profile, project=project, capabilities=capabilities)
+    plugin_manager = PluginManager(default_plugins())
+    events = plugin_manager.run(raw_events, plugin_context)
     timeline = Timeline.from_events(events)
     state_machine = RuntimeStateMachine().run(timeline.events)
     assertion_summary = evaluate_profile(profile, timeline, capabilities)
@@ -160,11 +165,15 @@ def build_replay_package(
     package = {
         "metadata": {
             "schema": "polaris.runtime_replay.v1",
+            "event_schema": "polaris.validation_event.v1",
+            "clock": "monotonic_ms",
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "input_dir": str(input_dir),
             "profile": profile,
             "project": project,
             "capabilities": capabilities,
+            "plugins": [plugin.name for plugin in plugin_manager.plugins],
+            "plugin_notes": plugin_context.notes,
         },
         "timeline": timeline.to_dict(),
         "runtime_state": state_machine.to_dict(),

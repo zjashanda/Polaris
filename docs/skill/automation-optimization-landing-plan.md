@@ -1,8 +1,8 @@
-﻿# 自动化测试优化方案在 Polaris Skill 的落地方案
+# 自动化测试优化方案在 Polaris Skill 的落地方案
 
 来源：`C:\Users\Administrator\Desktop\自动化测试优化方案.pdf`
 
-本文不是重做一套大平台，而是在当前 Polaris skill、Cucumber Agent Testing、validation-pool、串口/声卡/云控脚本基础上，把 PDF 里的核心能力按“轻平台、本地优先、可被 Jenkins 调用”的方式落地。
+本文不是重做一套大平台，而是在当前 Polaris skill、Cucumber Agent Testing、validation-pool、串口/声卡/云控脚本基础上，把 PDF 里的核心能力按“轻平台、本地优先、CLI 可复用”的方式落地。
 
 ## 1. PDF 核心思想提炼
 
@@ -24,7 +24,6 @@ PDF 的层次可以映射为：
 
 | PDF 层级 | 在 Polaris 中的落地位置 |
 | --- | --- |
-| Jenkins 层 | Jenkins 只负责定时、参数、触发 CLI，不承载业务判断。 |
 | 测试控制层 | 新增 optimized runner：执行顺序、重试、场景策略、生命周期。 |
 | 用例执行层 | 复用当前 Cucumber runner、phrase probe、fa2 batch、云控、网络、上下电脚本。 |
 | 数据采集与存储层 | 新增统一 execution/scene/failure 数据模型，保存状态快照、diff、日志索引。 |
@@ -36,7 +35,7 @@ PDF 的层次可以映射为：
 
 | 已有能力 | 对应 PDF 能力 |
 | --- | --- |
-| `polaris.local.json` 项目化串口/声卡/Wi-Fi/云环境配置 | Jenkins 参数注入、本机设备配置。 |
+| `polaris.local.json` 项目化串口/声卡/Wi-Fi/云环境配置 | 本机设备配置。 |
 | `satellite/cucumber-agent-testing/scripts/run_task.py` | 单任务执行入口。 |
 | `features/polaris_voice_core.feature` + registry/mapping | 用例意图、动作、断言固化。 |
 | `run_cucumber.py` 和各类模块 runner | 用例执行层。 |
@@ -61,7 +60,7 @@ PDF 的层次可以映射为：
 先做“本地轻平台”：
 
 - 所有入口仍是 Python CLI。
-- Jenkins 只调用 CLI 并归档产物。
+- 当前只保留本地 CLI；外部调度暂不纳入当前 skill。
 - 数据先用 JSON/JSONL/Markdown 落盘，后续需要再加 SQLite。
 - 不引入 Web 服务、不引入数据库服务、不改变当前真机调试路径。
 
@@ -408,7 +407,7 @@ failure_signature = normalized_result
 失败场景要能变成回归任务：
 
 ```text
-failure cluster -> 最小复现场景 -> regression task/scene -> Jenkins 定期回归
+failure cluster -> 最小复现场景 -> regression task/scene -> 本地 CLI 回归
 ```
 
 `build_regression_task.py` 做三件事：
@@ -424,52 +423,16 @@ failure cluster -> 最小复现场景 -> regression task/scene -> Jenkins 定期
 - 如果 network/mode/volume 状态变化是关键，保留造成状态变化的最小节点。
 - 如果重试后 PASS，标记为 flaky 回归，不和稳定失败混合统计。
 
-## 12. Jenkins 接入方式
+## 12. 本地 CLI 入口
 
-Jenkins 不需要理解业务，只调用 CLI：
-
-```powershell
-python satellite\cucumber-agent-testing\scripts\run_optimized_task.py `
-  --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json `
-  --project cskwb01 `
-  --env-file polaris.local.json `
-  --mode execute `
-  --allow-side-effects `
-  --max-retries 2
-```
-
-场景压测：
+当前阶段不做外部调度集成，只保留稳定、可复制、可审计的本地 CLI 入口：
 
 ```powershell
-python satellite\cucumber-agent-testing\scripts\generate_scene.py `
-  --strategy weighted_online_mixed_v1 `
-  --project cskwb01 `
-  --seed 20260525 `
-  --out satellite\cucumber-agent-testing\debug\scenes\scene.plan.json
-
-python satellite\cucumber-agent-testing\scripts\run_scene.py `
-  --scene satellite\cucumber-agent-testing\debug\scenes\scene.plan.json `
-  --mode execute `
-  --allow-side-effects
+python satellite\cucumber-agent-testing\scripts\run_task.py --task <task.json> --print-command
+python satellite\cucumber-agent-testing\scripts\run_task.py --task <task.json> --mode execute --allow-side-effects --manage-session
 ```
 
-分析：
-
-```powershell
-python satellite\cucumber-agent-testing\scripts\analyze_execution_store.py `
-  --runs satellite\cucumber-agent-testing\debug\optimized_runs `
-  --out satellite\cucumber-agent-testing\debug\analysis\latest
-```
-
-Jenkins 参数只需要：
-
-- `PROJECT`：`cskwb01` / `venusws63`。
-- `ENV_FILE`：默认 `polaris.local.json`。
-- `MODE`：`dry-run` / `execute`。
-- `STRATEGY`：场景策略 ID。
-- `SEED`：随机种子，保证可复现。
-- `DURATION` 或 `MAX_CASES`：执行时长或场景长度。
-- `ALLOW_SIDE_EFFECTS`：真机执行时显式开启。
+外部调度如后续需要，只能作为“调用 CLI + 归档产物”的薄入口，不能写业务判断、不能决定 PASS/FAIL。
 
 ## 13. 分阶段实现计划
 
@@ -540,24 +503,13 @@ Jenkins 参数只需要：
 验收：
 
 - 从失败簇自动生成最小回归场景。
-- 回归任务可由 Jenkins 或本地 CLI 直接执行。
+- 回归任务由本地 CLI 直接执行；外部调度暂不纳入当前 skill。
 - 回归结果能关联原始 `failure_signature`。
 
-### Phase 5：Jenkins 稳定接入
+### Phase 5：暂缓项
 
-目标：把本地轻平台接入定时任务。
-
-交付：
-
-- Jenkins 命令示例或 `ci/Jenkinsfile.example`。
-- 任务参数说明。
-- 产物归档清单。
-
-验收：
-
-- Jenkins 定时触发指定项目/策略。
-- 能归档 execution/scene/analysis 报告。
-- 不需要 Jenkins 写业务判断逻辑。
+- 外部调度、CI、远程设备池暂不纳入当前 skill。
+- 当前优先保证本地真机、Cucumber task、Event Runtime、Replay 和报告稳定。
 
 ## 14. 最优先建议
 
