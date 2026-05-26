@@ -26,6 +26,9 @@
       "串口日志缺失：logger 或串口配置问题",
       "播放成功但无唤醒证据：设备听音链路或固件唤醒问题"
     ]
+  },
+  "policy": {
+    "max_retries": 0,
+    "retry_blocked": false
   }
 }
-

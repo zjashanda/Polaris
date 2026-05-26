@@ -18,6 +18,7 @@ from .assertion_engine import (
 )
 from .events import ValidationEvent
 from .kernel import PluginContext, PluginManager, RuntimePlugin
+from .resource_runtime import ResourceClaim, ResourceSnapshot
 from .timeline import Timeline
 
 __all__ = [
@@ -26,6 +27,8 @@ __all__ = [
     "PluginContext",
     "PluginManager",
     "RuntimePlugin",
+    "ResourceClaim",
+    "ResourceSnapshot",
     "evaluate_attribution_validator",
     "evaluate_basic_command",
     "evaluate_command_interrupt",

@@ -47,6 +47,12 @@ class StateSnapshot:
 @dataclass
 class RuntimeStateMachine:
     state: str = "IDLE"
+    audio_state: str = "IDLE"
+    recognition_state: str = "IDLE"
+    media_state: str = "IDLE"
+    network_state: str = "UNKNOWN"
+    power_state: str = "ON"
+    cloud_state: str = "UNKNOWN"
     history: List[StateSnapshot] = field(default_factory=list)
 
     def apply(self, event: ValidationEvent) -> None:
@@ -67,6 +73,38 @@ class RuntimeStateMachine:
                 plugin=event.plugin,
             )
         )
+        self._apply_parallel_states(event)
+
+    def _apply_parallel_states(self, event: ValidationEvent) -> None:
+        if event.event_type == "AudioInjected":
+            self.audio_state = "INJECTING"
+            self.recognition_state = "WAKE_PENDING"
+        elif event.event_type == "AudioCompleted":
+            self.audio_state = "IDLE"
+        elif event.event_type == "WakeDetected":
+            self.recognition_state = "LISTENING"
+        elif event.event_type in {"ASRDetected", "CommandDetected"}:
+            self.recognition_state = "RECOGNIZING"
+        elif event.event_type == "TTSStarted":
+            self.media_state = "TTS_PLAYING"
+            self.cloud_state = "RESPONDING" if event.source in {"ap", "asr", "upper", "ws63"} else self.cloud_state
+        elif event.event_type == "MediaStarted":
+            self.media_state = "MEDIA_PLAYING"
+        elif event.event_type in {"MediaCompleted", "InterruptCompleted"}:
+            self.media_state = "IDLE"
+        elif event.event_type == "NetworkLost":
+            self.network_state = "OFFLINE"
+            self.cloud_state = "UNAVAILABLE"
+        elif event.event_type == "NetworkRecovered":
+            self.network_state = "ONLINE"
+            self.cloud_state = "AVAILABLE"
+        elif event.event_type == "RebootDetected":
+            self.power_state = "REBOOTING"
+            self.recognition_state = "RESETTING"
+            self.media_state = "IDLE"
+        elif event.event_type == "CrashDetected":
+            self.power_state = "CRASHED"
+            self.recognition_state = "UNKNOWN"
 
     def run(self, events: List[ValidationEvent]) -> "RuntimeStateMachine":
         for event in events:
@@ -76,5 +114,13 @@ class RuntimeStateMachine:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "final_state": self.state,
+            "parallel_states": {
+                "audio": self.audio_state,
+                "recognition": self.recognition_state,
+                "media": self.media_state,
+                "network": self.network_state,
+                "power": self.power_state,
+                "cloud": self.cloud_state,
+            },
             "history": [item.__dict__ for item in self.history],
         }

@@ -225,6 +225,53 @@ runtime_state.json           # 状态机结果
 replay_package.json          # 完整 replay 包
 ```
 
+### 5.7 优化执行封装：执行记录、重试和资源预检
+
+`run_optimized_task.py` 是当前按两份 Runtime 优化方案新增的第一层工程化入口。它不会替换 `run_task.py`，而是在外层增加：
+
+- 资源/约束 preflight：串口、声卡、网络、云环境、副作用策略、项目拓扑。
+- 执行前后状态快照：`state/before.json`、`state/after.json`。
+- 状态差异：`state_diff.json`。
+- 尝试记录：`attempts.jsonl` 和每次 attempt 的 `stdout.log`。
+- 汇总记录：`execution_record.json`，包含 `PASS`、`STABLE_FAIL`、`FLAKY_PASS`、`ENV_RELATED` 等分类。
+
+只做预检，不碰真机：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode dry-run --precheck-only
+```
+
+打印将要执行的底层命令：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode dry-run --print-command
+```
+
+真机执行并允许一次失败重试：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode execute --allow-side-effects --manage-session --runtime-strict --max-retries 1
+```
+
+默认输出目录：
+
+```text
+satellite/cucumber-agent-testing/debug/optimized_runs/<时间戳>_<task_id>/
+```
+
+重点看：
+
+```text
+preflight.json
+command.json
+execution_record.json
+attempts.jsonl
+state/before.json
+state/after.json
+state_diff.json
+attempt_01/stdout.log
+```
+
 ## 6. Task JSON 怎么写
 
 推荐先复制 `satellite/cucumber-agent-testing/tasks/examples/` 下的模板。
@@ -332,7 +379,24 @@ CrashDetected
 - 有 AP/ASR 识别但无预期响应，需要结合媒体/TTS/云控事件判断是识别问题、执行问题还是云端问题。
 - 出现 `RebootDetected`、`CrashDetected`、watchdog、panic、hardfault 等标记，要单独进入健康度和稳定性统计。
 
-## 9. Event Runtime Phase 1 结构
+## 9. Runtime Phase 2 最小落地：执行记录、资源和约束
+
+当前已经新增 Phase 2 的最小闭环，不做复杂平台化，只先保证本地真机任务更可控：
+
+```text
+runtime/
+  resource_runtime.py       # ResourceClaim/ResourceSnapshot，检查串口/声卡/网络/云控/电源资源冲突
+  constraint_engine.py      # task/env preflight，检查副作用、串口拓扑、在线网络、云环境、打断 guard
+scripts/
+  run_optimized_task.py     # 包装 run_task.py，产出 execution_record、attempts、state snapshot
+references/optimization/
+  execution_record.schema.json
+  retry_policy.json
+```
+
+这一步的目标不是替代现有 Cucumber runner，而是给每次执行补上“可审计上下文”。后续做场景引擎、失败聚类、设备健康度时，都以 `execution_record.json` 为输入。
+
+## 10. Event Runtime Phase 1 结构
 
 当前已开始按高级优化方案做 Phase 1：
 
@@ -358,7 +422,7 @@ runtime/
 
 后续新功能不要直接塞进一个巨大的 runtime 文件里，优先按领域进入 plugin：wake、asr、media、network、reboot，必要时再新增 plugin。
 
-## 10. 新项目/新功能怎么导入学习
+## 11. 新项目/新功能怎么导入学习
 
 如果后续有新项目说明、新功能需求、外部测试方案、类似 `voice-test-plan-designer` 的资料，统一放到：
 
@@ -378,7 +442,7 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 
 资料不足时，只输出缺口清单，不伪造可执行能力。
 
-## 11. 哪些文件不要提交
+## 12. 哪些文件不要提交
 
 这些只属于本机或运行产物：
 
@@ -396,7 +460,7 @@ __pycache__/
 *.tmp
 ```
 
-## 12. 常见问题
+## 13. 常见问题
 
 ### 声卡播放不生效怎么办
 

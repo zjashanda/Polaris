@@ -75,3 +75,9 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - 事件统一使用 `ValidationEvent` v1 schema，保留 wall time，但断言以 monotonic timeline 为准。
 - Cucumber 只表达测试意图；执行动作、证据解析、断言逻辑必须落到 registry/runtime/tool 层。
 - 外部调度、远程设备池、大规模聚类暂不纳入当前 skill，当前优先保证本地真机闭环稳定。
+
+## 当前优化执行入口
+
+- 新增任务优先走 `satellite/cucumber-agent-testing/scripts/run_optimized_task.py`。
+- 它会在现有 `run_task.py` 外层生成 `execution_record.json`、`attempts.jsonl`、`state/before.json`、`state/after.json`、`state_diff.json`。
+- 执行记录、重试、资源/约束预检优先走 `run_optimized_task.py`；只有调试底层 Cucumber runner 时才直接用 `run_task.py`。
