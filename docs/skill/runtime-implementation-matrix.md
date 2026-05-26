@@ -26,7 +26,7 @@
 | Failure/Health MVP | failure fingerprint、health metrics、报告 | `runtime/failure_analysis.py`, `scripts/analyze_execution_store.py` |
 | Replay VM-lite | cursor、snapshot、rollback、time travel 到事件 | `runtime/replay_vm.py`, `scripts/replay_vm.py` |
 | Simulation-lite | 生成 Fake log 并可 replay | `runtime/simulation.py`, `scripts/simulate_runtime.py` |
-| Assertion DSL-lite | `EXPECT/FORBID` 三类基础时序 DSL | `runtime/assertion_dsl.py`, `scripts/run_assertion_dsl.py` |
+| Assertion DSL-lite | `EXPECT/FORBID`、`EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`，覆盖基础时序和 ASR/Command -> Media/TTS 响应链路 | `runtime/assertion_dsl.py`, `scripts/run_assertion_dsl.py` |
 | 真机 session 配置隔离 | `run_cucumber.py` 将 env-file/context 的 AP/CP/ASR/baudrate 传给 managed session，probe/read_lines 优先使用 session_manifest | `scripts/run_cucumber.py`, `tools/device/polaris_serial_harness.py`, `tools/core/polaris_runtime.py`, `tools/core/polaris_config.py` |
 | 首唤醒有效音频锚点 | 播放进程明显长于 wav 时长时，使用 `AudioCompleted - audio_duration_ms` 估算有效波形起点；不能估算才输出 `TIMING_AMBIGUOUS` | `runtime/assertion_engine.py`, `runtime/parsers/json_artifact_parser.py` |
 | 项目能力降级 | WS63 `cp` 留空时，BDD 与 Runtime 均按 AP/ASR 闭环判断；WB01 仍要求 CP/AP/ASR | `scripts/run_cucumber.py`, `runtime/capabilities.py`, `runtime/replay.py` |
@@ -52,6 +52,7 @@
 | Capability Runtime | 已有项目能力矩阵 MVP | codec、音频回采、真实出声质量、细粒度云控权限仍需继续补充 |
 | Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP | 现有 tools 尚未完全改造成统一 adapter execute interface |
 | IR Compiler | 已有 Validation IR MVP | 尚未把 feature/task/agent/scene 全入口统一到一个最终 IR schema |
+| Validation DSL Compiler | 已有 Assertion DSL-lite 和 State Assertion DSL-lite，可表达常见事件存在、窗口、序列、响应、持续时长、状态禁止 | 尚未替代 Python profile 断言，也未形成完整自然语言 DSL 编译器 |
 | Analytics Pipeline | 已有本地 trend MVP | 尚未流式化，也未接长期指标库/看板 |
 
 ## 明确暂缓
@@ -62,7 +63,7 @@
 | 大规模 Failure Clustering | 当前先做 fingerprint/health MVP，不做大规模聚类平台 |
 | 完整 Replay VM | 当前只有 VM-lite，不做完整 snapshot rollback/fault injection |
 | 完整 Device Simulation | 当前只有 Fake log，不模拟云端协议/ASR 模型/媒体栈 |
-| 完整 Validation DSL Compiler | 当前只有 assertion DSL-lite，不替代 Python profile 断言 |
+| 完整 Validation DSL Compiler | 当前 DSL-lite 已覆盖常见业务链路，但不替代 Python profile 断言 |
 | Runtime Plugin Sandbox | 当前插件同进程执行，暂不做进程级隔离和内存限制 |
 
 ## 当前优先验证路径
@@ -124,3 +125,11 @@
 |---|---|
 | State Guard / Coverage | 使用 WB01 既有 `first_wake` 真机日志重放，`state_health=PASS`，`transition_count=24`，`violation_count=0` |
 | Kernel runtime_analysis | `runtime_analysis.md/json` 已汇总 `state_health`、`state_violation_count`、`transition_count`，用于区分稳定性问题、日志缺口和业务断言失败 |
+
+## 2026-05-26 Assertion DSL 业务链路验证
+
+| 能力 | 验证结果 |
+|---|---|
+| `EXPECT_SEQUENCE` | WB01 `first_wake` replay 中验证 `WakeDetected -> ASRDetected -> MediaStarted WITHIN 3000ms` PASS |
+| `EXPECT_RESPONSE` | WB01 `first_wake` replay 中验证 `ASRDetected|CommandDetected` 后 `MediaStarted|TTSStarted` 1500ms 内响应 PASS |
+| `EXPECT_DURATION` | WB01 `first_wake` replay 中验证 `MediaStarted TO MediaCompleted >= 50ms` PASS |

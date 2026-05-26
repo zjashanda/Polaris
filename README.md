@@ -227,6 +227,17 @@ replay_package.json          # 完整 replay 包
 
 `runtime_state.json` 里重点看 `state_health`、`state_violations` 和 `coverage`：它们分别表示状态机健康度、Crash/Reboot/音频媒体顺序/识别前因等 guard 违规、以及状态迁移覆盖情况。
 
+如果要对 replay timeline 写轻量业务断言，可使用 `run_assertion_dsl.py`。当前支持：
+
+```text
+EXPECT WakeDetected
+EXPECT WakeDetected WITHIN 3000ms AFTER AudioInjected
+FORBID RebootDetected FOR 10000ms AFTER WakeDetected
+EXPECT_SEQUENCE WakeDetected -> ASRDetected -> MediaStarted WITHIN 15000ms
+EXPECT_RESPONSE TTSStarted|MediaStarted WITHIN 15000ms AFTER ASRDetected|CommandDetected
+EXPECT_DURATION MediaStarted TO MediaCompleted >= 500ms
+```
+
 ### 5.7 优化执行封装：执行记录、重试和资源预检
 
 `run_optimized_task.py` 是当前按两份 Runtime 优化方案新增的第一层工程化入口。它不会替换 `run_task.py`，而是在外层增加：
@@ -453,7 +464,7 @@ scripts/run_scene.py                # scene graph -> run_optimized_task
 scripts/analyze_execution_store.py  # execution_record -> failure fingerprint / health report
 scripts/replay_vm.py                # replay package -> VM-lite snapshot/time travel
 scripts/simulate_runtime.py         # Fake log -> replay smoke
-scripts/run_assertion_dsl.py        # EXPECT/FORBID DSL-lite
+scripts/run_assertion_dsl.py        # EXPECT/FORBID/SEQUENCE/RESPONSE/DURATION DSL-lite
 scripts/inspect_device_adapters.py  # env -> adapter registry
 scripts/build_capability_matrix.py  # env -> project capability matrix
 scripts/build_event_graph.py        # timeline/run_dir -> causal event graph

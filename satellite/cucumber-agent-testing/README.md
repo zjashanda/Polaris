@@ -255,6 +255,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `runtime_state.json` 已包含 `state_health`、`state_violations`、`coverage` 和 `transitions`。后续判断重启/崩溃、识别前因缺失、音频或媒体证据顺序不完整时，优先引用这些字段，不要只看最终场景 PASS/FAIL。
 
+`run_assertion_dsl.py` 已支持基础时序和业务链路 DSL：`EXPECT`、`FORBID`、`EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`。在线问答、音乐、新闻、相声等场景可先用它验证“识别后是否出现 TTS/Media 响应、响应是否在指定窗口内、播放持续是否达到阈值”，后续再把稳定规则沉淀进 profile 断言。
+
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 
 ## 新功能怎么接入
