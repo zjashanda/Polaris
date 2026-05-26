@@ -86,9 +86,11 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - Replay VM-lite、Simulation-lite、Assertion DSL-lite 分别走 `replay_vm.py`、`simulate_runtime.py`、`run_assertion_dsl.py`。
 - Assertion DSL-lite 已支持 `EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`，可表达 ASR/Command 到 TTS/Media 的响应链路和媒体持续时间；复杂业务仍优先固化到 Python profile 断言。
 - Adapter/Capability/IR/EventGraph/StateDSL/Trend 分别走 `inspect_device_adapters.py`、`build_capability_matrix.py`、`compile_validation_ir.py`、`build_event_graph.py`、`run_state_assertion_dsl.py`、`build_analytics_trend.py`。
+- Validation IR 不再只支持 task：`compile_validation_ir.py` 可用 `--task`、`--scene` 或 `--feature-plan` 编译；`run_kernel_scene.py --emit-ir-bundle` 可输出 scene 级 IR bundle，用于确认 feature/task/scene 最终走同一套 deterministic runtime 输入。
 - 新项目接入时先看 `build_capability_matrix.py`，其中 `audio.loopback_oracle`、`media.acoustic_response_oracle`、云控权限和 `reboot.boot_reason_oracle` 为常见缺口；不要把“设备日志说播了”直接等同于“真实出声质量通过”。
 - Kernel 生命周期入口走 `run_validation_kernel.py`；它会在 runner 后自动补齐 runtime replay 侧的 event graph、默认 state assertions 和 Replay VM-lite snapshot。
 - 状态稳定性不要只看最终 PASS/FAIL；必须结合 `runtime_state.json` 里的 `state_health`、`state_violations`、`coverage` 区分崩溃/重启、日志缺口、媒体顺序缺失和业务断言失败。
+- `run_state_coverage_policy.py` 和 Kernel 后处理会按 profile 检查 coverage 阈值；缺少首唤醒 WakeDetected、基础命令 ASR/Command、联网恢复 NetworkLost/NetworkRecovered 等关键覆盖时，应先归因日志/前置/需求，再决定是否判固件问题。
 - Event Graph 需要优先查看 `risk_summary` 和因果边：`command/asr_to_*_response`、`media_started_to_completed`、`media_interrupted`、`interrupt_to_recognition`、`possible_reboot/crash_after_activity`，用于分析在线媒体、打断和重启根因。
-- adapter 单动作规划/执行入口走 `run_adapter_action.py`，默认只 dry-run 渲染命令；真执行副作用必须显式 `--execute --allow-side-effects`。当前已覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置。
+- adapter 单动作规划/执行入口走 `run_adapter_action.py`，默认只 dry-run 渲染命令；常见多步前置走 `plan_adapter_flow.py`，例如 `pa_recover`、`switch_device_env`、`wake_audio_file`、`set_volume`、`set_half_duplex`、`set_full_duplex`。真执行副作用必须显式 `--execute --allow-side-effects`。
 - 首次唤醒时序不要直接拿播放进程启动当唯一锚点；如播放进程明显长于 wav 时长，优先按 `AudioCompleted - audio_duration_ms` 估算有效波形起点，无法估算才输出 `TIMING_AMBIGUOUS`。

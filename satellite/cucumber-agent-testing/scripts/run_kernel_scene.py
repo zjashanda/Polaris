@@ -28,6 +28,7 @@ if str(BDD_ROOT) not in sys.path:
 
 from runtime.scene_engine import validate_scene_graph  # noqa: E402
 from runtime.validation_kernel import ValidationKernel  # noqa: E402
+from runtime.validation_ir import build_scene_validation_ir_bundle  # noqa: E402
 
 
 PASS_RESULTS = {"PASS", "PLAN_OK", "DRY_RUN_OK", "PASS_WITH_SKIPPED_TIMING"}
@@ -116,6 +117,7 @@ def main() -> int:
     parser.add_argument("--runtime-strict", action="store_true")
     parser.add_argument("--max-retries", type=int, default=0)
     parser.add_argument("--honor-gaps", action="store_true", help="execute 模式按 node.metadata.random_gap_s 等待。")
+    parser.add_argument("--emit-ir-bundle", action="store_true", help="输出 scene 级 Validation IR bundle，用于检查 scene/task 统一 IR。")
     parser.add_argument("--out-root", default="")
     parser.add_argument("--print-command", action="store_true")
     args = parser.parse_args()
@@ -129,9 +131,25 @@ def main() -> int:
     out_root = resolve_path(args.out_root) if args.out_root else BDD_ROOT / "debug" / "kernel_scene_runs" / f"{stamp()}_{scene_id}"
     out_root.mkdir(parents=True, exist_ok=True)
     write_json(out_root / "scene_validation.json", validation)
+    ir_bundle_path = ""
+    if args.emit_ir_bundle:
+        def load_task_from_scene(value: str) -> Dict[str, Any]:
+            return load_json(resolve_path(value))
+
+        ir_bundle = build_scene_validation_ir_bundle(
+            scene=scene,
+            env_payload=env_payload,
+            load_task=load_task_from_scene,
+            scene_path=str(scene_path),
+            env_file=str(env_path),
+            mode=args.mode,
+            allow_side_effects=args.allow_side_effects,
+        )
+        ir_bundle_path = str(out_root / "scene_validation_ir_bundle.json")
+        write_json(Path(ir_bundle_path), ir_bundle)
 
     if validation.get("result") == "FAIL":
-        summary = {"schema": "polaris.kernel_scene_record.v1", "scene": str(scene_path), "scene_id": scene_id, "result": "FAIL", "validation": validation, "nodes": []}
+        summary = {"schema": "polaris.kernel_scene_record.v1", "scene": str(scene_path), "scene_id": scene_id, "result": "FAIL", "validation": validation, "ir_bundle": ir_bundle_path, "nodes": []}
         write_json(out_root / "kernel_scene_record.json", summary)
         print(out_root)
         print("result=FAIL scene_validation=FAIL")
@@ -169,6 +187,8 @@ def main() -> int:
                 cmd.append("--runtime-strict")
             print("$ " + quote_cmd(cmd))
         print(out_root)
+        if ir_bundle_path:
+            print(f"ir_bundle={ir_bundle_path}")
         print(f"result=PLAN_OK nodes={len(scene.get('nodes', []) or [])}")
         return 0
 
@@ -237,6 +257,7 @@ def main() -> int:
         "created_at": now_iso(),
         "result": final_result,
         "validation": validation,
+        "ir_bundle": ir_bundle_path,
         "nodes": node_results,
     }
     write_json(out_root / "kernel_scene_record.json", summary)

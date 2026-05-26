@@ -74,5 +74,212 @@
     "attribution_validator": [
       "FORBID_HISTORY RebootDetected"
     ]
+  },
+  "coverage": {
+    "common": {
+      "max_error_violations": 0,
+      "min_transition_count": 1
+    },
+    "profiles": {
+      "first_wake": {
+        "required_event_types": [
+          "WakeDetected"
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ],
+        "required_any_parallel_states": {
+          "recognition": [
+            "LISTENING",
+            "RECOGNIZING"
+          ]
+        }
+      },
+      "recognition_mode_wake": {
+        "required_event_types": [
+          "WakeDetected"
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ],
+        "required_any_parallel_states": {
+          "recognition": [
+            "LISTENING",
+            "RECOGNIZING"
+          ]
+        }
+      },
+      "basic_command": {
+        "required_event_types": [
+          "WakeDetected"
+        ],
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ],
+        "required_any_parallel_states": {
+          "recognition": [
+            "LISTENING",
+            "RECOGNIZING"
+          ]
+        }
+      },
+      "command_batch": {
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "command_batch_exploratory": {
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "wake_matrix": {
+        "required_event_types": [
+          "WakeDetected"
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "online_oneshot_matrix": {
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ],
+          [
+            "TTSStarted",
+            "MediaStarted"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "offline_oneshot_matrix": {
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "online_vad_special": {
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ],
+          [
+            "TTSStarted",
+            "MediaStarted"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "false_wake_quiet": {
+        "forbidden_event_types": [
+          "WakeDetected",
+          "ASRDetected",
+          "CommandDetected",
+          "CrashDetected",
+          "RebootDetected"
+        ],
+        "min_transition_count": 0
+      },
+      "false_wake_playback": {
+        "forbidden_event_types": [
+          "WakeDetected",
+          "CrashDetected",
+          "RebootDetected"
+        ],
+        "min_transition_count": 0
+      },
+      "wake_interrupt": {
+        "required_event_types": [
+          "WakeDetected",
+          "InterruptInjected"
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "command_interrupt": {
+        "required_event_types": [
+          "InterruptInjected"
+        ],
+        "required_any_event_types": [
+          [
+            "ASRDetected",
+            "CommandDetected"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "network_recovery_basic": {
+        "required_event_types": [
+          "NetworkLost",
+          "NetworkRecovered"
+        ],
+        "forbidden_event_types": [
+          "CrashDetected"
+        ]
+      },
+      "interrupt_prerequisite_measurement": {
+        "required_any_event_types": [
+          [
+            "TTSStarted",
+            "MediaStarted"
+          ]
+        ],
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ]
+      },
+      "attribution_validator": {
+        "forbidden_event_types": [
+          "CrashDetected",
+          "RebootDetected"
+        ],
+        "min_transition_count": 0
+      }
+    }
   }
 }

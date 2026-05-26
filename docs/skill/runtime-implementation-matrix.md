@@ -35,9 +35,11 @@
 | Capability Runtime MVP | 细粒度推导 AP/CP/ASR、声卡、控制口、PA、网络、云环境、半/全双工、在线媒体、打断、音频回采、媒体响应 oracle、云控权限、重启原因 oracle 等能力 | `runtime/capability_runtime.py`, `scripts/build_capability_matrix.py` |
 | Event Graph MVP | 从 Timeline 生成 `audio_caused_wake`、`wake_to_asr`、`asr/command_to_response`、媒体 start->complete、打断、网络恢复、重启/崩溃活动前因和 `risk_summary` | `runtime/event_graph.py`, `scripts/build_event_graph.py` |
 | State Assertion DSL-lite | 在 `runtime_state.json` 上执行状态断言、历史事件必选/任选、禁止事件 | `runtime/state_assertion_dsl.py`, `scripts/run_state_assertion_dsl.py` |
-| Validation IR MVP | task + env + resource + constraint + adapter + capability 编译为 `polaris.validation_ir.v1` | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
+| State Coverage Policy MVP | 按 profile 检查 `runtime_state.coverage`，输出覆盖阈值 PASS/WARN/FAIL，并接入 Kernel runtime analysis | `runtime/state_coverage_policy.py`, `scripts/run_state_coverage_policy.py` |
+| Validation IR MVP | task/scene/compiled feature plan + env 编译为 `polaris.validation_ir.v1` 或 `polaris.validation_ir_bundle.v1`，统一包含 resource/constraint/adapter/capability 与 intent/actions/expect | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
 | Analytics Trend MVP | 扫描 `execution_record.json`，按 day/project/task 聚合 result/stability 趋势 | `runtime/analytics_trend.py`, `scripts/build_analytics_trend.py` |
 | Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `runtime/device_adapter.py`, `scripts/run_adapter_action.py` |
+| Adapter Flow Map MVP | 常见前置/调试流程映射到 adapter action 序列，默认 dry-run 渲染命令 | `references/adapter_flow_map.json`, `scripts/plan_adapter_flow.py` |
 | Validation Kernel Lifecycle MVP | compile_ir、preflight、adapter/capability/resource/constraint 快照、可选 run_optimized_task、kernel_record/lifecycle；真机 replay 存在时自动生成 event graph、state assertions、Replay VM-lite snapshot | `runtime/validation_kernel.py`, `scripts/run_validation_kernel.py` |
 | Kernel Scene Scheduler MVP | scene 每个节点走独立 Kernel 生命周期，输出 scene 级记录和节点级 kernel_record | `scripts/run_kernel_scene.py` |
 | 默认状态断言策略 | 按 runtime profile 自动追加 WakeDetected、ASR/Command、媒体响应、禁止 Crash/Reboot/误唤醒等兜底断言 | `references/optimization/state_assertion_policy.json` |
@@ -48,10 +50,10 @@
 |---|---|---|
 | Validation Kernel | 已有 plugin kernel、Validation IR MVP、本地 lifecycle runner、runner 后 replay/event graph/state/replay_vm 侧证据、scene scheduler | adapter execute 尚未完全成为所有底层 tools 的唯一执行通道 |
 | Event Graph | 已有本地因果图 MVP，已覆盖媒体响应、媒体完成、打断、网络恢复、重启/崩溃前因和风险摘要 | 事件因果仍是启发式，尚未覆盖所有项目私有云端协议链路 |
-| Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率和 State Assertion DSL-lite | 尚未实现完整层级状态树和状态覆盖率阈值策略 |
+| Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率、State Assertion DSL-lite 和 coverage 阈值策略 MVP | 尚未实现完整层级状态树；项目私有 profile 阈值还需随实机资料细化 |
 | Capability Runtime | 已有项目能力矩阵 MVP，已显式列出音频回采、媒体响应 oracle、云控配置权限、boot reason oracle 缺口 | codec、真实出声质量评分、具体云 API token 权限校验仍需项目资料或实机接口 |
 | Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP，常用串口/声卡/网络/云控动作可统一 dry-run 规划 | 现有长流程 runner 尚未全部改为只经 adapter execute interface 调用 |
-| IR Compiler | 已有 Validation IR MVP | 尚未把 feature/task/agent/scene 全入口统一到一个最终 IR schema |
+| IR Compiler | 已有 task、scene node、scene bundle、compiled feature plan bundle 的 Validation IR MVP | agent planner/replay 入口仍是后续扩展，当前 runtime 已不直接执行自然语言 feature |
 | Validation DSL Compiler | 已有 Assertion DSL-lite 和 State Assertion DSL-lite，可表达常见事件存在、窗口、序列、响应、持续时长、状态禁止 | 尚未替代 Python profile 断言，也未形成完整自然语言 DSL 编译器 |
 | Analytics Pipeline | 已有本地 trend MVP | 尚未流式化，也未接长期指标库/看板 |
 
@@ -99,7 +101,7 @@
 | Capability Matrix | WB01 supported=20；WS63 supported=13/config_required=6/not_applicable=1 |
 | Event Graph | WB01 nodes=25/edges=32/warnings=0；WS63 nodes=34/edges=46/warnings=0 |
 | State Assertion DSL | WB01/WS63 均 PASS，断言 WakeDetected history 存在且 power/final_state 未 CRASHED |
-| Validation IR | WB01/WS63 `first_wake` IR constraints 均 PASS |
+| Validation IR | WB01/WS63 `first_wake` IR constraints 均 PASS；scene/feature plan bundle 已做 dry-run 编译 smoke |
 | Analytics Trend | 本地 optimized_runs 历史扫描 records=11，结果只作为本机历史样本，不提交 |
 
 ## 2026-05-26 Kernel 生命周期补齐验证
@@ -157,3 +159,29 @@
 | Adapter Registry | WB01 `adapters=7/actions=25/warnings=0`；WS63 `adapters=7/actions=21/warnings=2` |
 | Control actions | `pa_on`、`power_on` dry-run 均 PLAN_OK，命令渲染到控制口 |
 | Env/Cloud/Network/Audio actions | `serial.ap/set_device_env`、`cloud.api/set_volume`、`network.local/hotspot_status`、`audio.playback/play` dry-run 均 PLAN_OK |
+
+## 2026-05-26 Validation IR 统一入口验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Task IR | WB01 `first_wake.example.json` + env 编译为 `polaris.validation_ir.v1`，constraints=PASS |
+| Scene IR Bundle | WS63 `scene_smoke.json` 编译为 `polaris.validation_ir_bundle.v1`，items=3，constraints=PASS |
+| Kernel Scene IR Bundle | `run_kernel_scene.py --emit-ir-bundle --print-command` 输出 `scene_validation_ir_bundle.json`，items=3，PLAN_OK |
+| Feature Plan IR Bundle | `compile_feature.py --tag first_wake` 后再 `compile_validation_ir.py --feature-plan`，输出 feature bundle，items=1，constraints=PASS |
+
+## 2026-05-26 State Coverage Policy 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Coverage policy CLI | 旧版 first_wake runtime_state 可从 history 派生 coverage，输出 WARN（识别并行状态覆盖不足），不误报脚本崩溃 |
+| Coverage policy CLI | 新版 state_machine fake_run runtime_state 输出 PASS，WakeDetected/Crash/Reboot/parallel recognition 检查均通过 |
+| Kernel 集成 | Kernel 后处理会为每个 replay package 写 `state_coverage_policy.json`，并在 `runtime_analysis.json` 聚合 `state_coverage_result` |
+
+## 2026-05-26 Adapter Flow Map 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| WB01 PA 前置 | `plan_adapter_flow.py --flow pa_recover` 渲染 `pa_on` + `pa_persist`，均 PLAN_OK |
+| WB01 环境切换 | `--flow switch_device_env` 渲染 AP `set_device_env`，PLAN_OK |
+| WB01 云控音量 | `--flow set_volume --param volume=35` 渲染 cloud API 命令，PLAN_OK |
+| WS63 声卡播放 | `--flow wake_audio_file --param audio_file=sample.wav` 渲染 listenai-play + WS63 声卡 key，PLAN_OK |

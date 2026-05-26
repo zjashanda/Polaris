@@ -303,6 +303,12 @@ scene 通过 Kernel 执行：
 python satellite\cucumber-agent-testing\scripts\run_kernel_scene.py --scene satellite\cucumber-agent-testing\debug\validation\scene_smoke.json --env-file polaris.local.json --mode dry-run --execute-runner
 ```
 
+如果只想检查 scene/task 是否能统一编译成 IR，可以输出 scene 级 bundle：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_kernel_scene.py --scene satellite\cucumber-agent-testing\debug\validation\scene_smoke.json --env-file polaris.local.json --mode dry-run --emit-ir-bundle --print-command
+```
+
 真机执行时仍必须显式允许副作用：
 
 ```powershell
@@ -315,6 +321,7 @@ Kernel 重点产物：
 kernel_record.json
 lifecycle.jsonl
 validation_ir.json
+scene_validation_ir_bundle.json  # scene 执行且带 --emit-ir-bundle 时生成
 adapter_registry.json
 capability_matrix.json
 resource_snapshot.json
@@ -325,7 +332,7 @@ post_analysis/*/state_assertions.json
 post_analysis/*/replay_vm_state.json
 ```
 
-`runtime_analysis.json` 会同时汇总 profile 断言、默认状态断言和 `state_health`。如果出现 Crash 后继续业务、Reboot 后无恢复标记就继续识别、音频/媒体证据顺序不完整等状态机 guard 违规，会在这里单独呈现，便于区分稳定性问题、日志缺口和业务断言失败。
+`runtime_analysis.json` 会同时汇总 profile 断言、默认状态断言、状态覆盖策略和 `state_health`。如果出现 Crash 后继续业务、Reboot 后无恢复标记就继续识别、音频/媒体证据顺序不完整等状态机 guard 违规，或 profile 要求的 Wake/ASR/Media/Network 状态覆盖缺失，会在这里单独呈现，便于区分稳定性问题、日志缺口和业务断言失败。
 
 ## 6. Task JSON 怎么写
 
@@ -471,12 +478,21 @@ scripts/inspect_device_adapters.py  # env -> adapter registry
 scripts/build_capability_matrix.py  # env -> project capability matrix
 scripts/build_event_graph.py        # timeline/run_dir -> causal event graph + risk summary
 scripts/run_state_assertion_dsl.py  # runtime_state -> state assertions
-scripts/compile_validation_ir.py    # task + env -> Validation IR
+scripts/run_state_coverage_policy.py # runtime_state -> profile coverage PASS/WARN/FAIL
+scripts/compile_validation_ir.py    # task/scene/compiled feature plan + env -> Validation IR / bundle
 scripts/run_validation_kernel.py    # task + env -> Kernel lifecycle record
 scripts/run_kernel_scene.py         # scene graph -> per-node Kernel lifecycle record
 scripts/run_adapter_action.py       # adapter registry action -> command plan/execute，默认 dry-run
+scripts/plan_adapter_flow.py        # high-level setup/execution flow -> adapter action sequence
 scripts/build_analytics_trend.py    # execution_record history -> local trend report
 docs/skill/runtime-implementation-matrix.md
+```
+
+常见前置/调试流程可以先通过 Adapter Flow dry-run，确认串口、声卡、云控和网络动作会走哪个底层工具：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\plan_adapter_flow.py --flow pa_recover --env-file polaris.local.json
+python satellite\cucumber-agent-testing\scripts\plan_adapter_flow.py --flow wake_audio_file --env-file polaris.local.json --param audio_file=sample.wav
 ```
 
 本轮真机 smoke 已验证：
@@ -484,9 +500,9 @@ docs/skill/runtime-implementation-matrix.md
 - WB01：`first_wake` 通过，managed session 使用 COM13/COM12/COM14，BDD 观察到 CP/AP/ASR 闭环，Runtime PASS。
 - WS63：`first_wake` 通过，managed session 使用 COM20/COM16，BDD 观察到 AP/ASR 闭环，Runtime PASS。
 - `run_optimized_task.py` 已修正聚合逻辑，会按 scenario/runtime 结果输出 `FAIL`、`BLOCKED`、`TIMING_AMBIGUOUS` 或 `PASS`，不会把 `status=DONE` 误当 PASS。
-- Adapter/Capability/EventGraph/StateDSL/ValidationIR/AnalyticsTrend 已完成本地 MVP，WB01 与 WS63 都做了 smoke 验证；详细数字见 `docs/skill/runtime-implementation-matrix.md`。
+- Adapter/Capability/EventGraph/StateDSL/ValidationIR/AnalyticsTrend 已完成本地 MVP，WB01 与 WS63 都做了 smoke 验证；Validation IR 现在支持 task、scene node、scene bundle、compiled feature plan bundle，详细数字见 `docs/skill/runtime-implementation-matrix.md`。
 - Validation Kernel 生命周期已完成本地 MVP：`run_validation_kernel.py` 会产出 `kernel_record.json`、`lifecycle.jsonl`、`validation_ir.json`、adapter/capability/resource/constraint 快照，并可委托 `run_optimized_task.py` 执行。
-- Kernel scene 调度已接入：`run_kernel_scene.py` 会让 scene 每个节点都走 Kernel 生命周期；真机执行后的 runtime replay 会自动补齐 event graph、默认 state assertions、Replay VM-lite snapshot 和 `runtime_analysis.json`。
+- Kernel scene 调度已接入：`run_kernel_scene.py` 会让 scene 每个节点都走 Kernel 生命周期；真机执行后的 runtime replay 会自动补齐 event graph、默认 state assertions、state coverage policy、Replay VM-lite snapshot 和 `runtime_analysis.json`。
 
 ## 10. Event Runtime Phase 1 结构
 

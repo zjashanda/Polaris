@@ -23,6 +23,7 @@ from .event_graph import build_event_graph, render_event_graph_markdown
 from .events import ValidationEvent
 from .replay_vm import ReplayVM
 from .state_assertion_dsl import evaluate_state_dsl
+from .state_coverage_policy import evaluate_state_coverage_policy
 from .timeline import Timeline
 from .validation_ir import build_validation_ir
 
@@ -167,6 +168,9 @@ class ValidationKernel:
             mode=mode,
             allow_side_effects=allow_side_effects,
             tag=tag,
+            command_text=command_text,
+            observe_ms=observe_ms,
+            source_context={"runtime_overrides": {"command_text": command_text, "observe_ms": observe_ms}},
         )
         write_json(self.out_dir / "validation_ir.json", ir.to_dict())
         write_json(self.out_dir / "adapter_registry.json", ir.adapters)
@@ -352,6 +356,15 @@ class ValidationKernel:
                 "reason": "runtime_state missing",
             }
             write_json(analysis_dir / "state_assertions.json", state_assertions)
+            policy_payload = self._default_state_policy_payload()
+            coverage_policy = evaluate_state_coverage_policy(state, profile, policy_payload) if state else {
+                "schema": "polaris.state_coverage_policy_result.v1",
+                "profile": profile,
+                "result": "SKIPPED",
+                "checks": [],
+                "reason": "runtime_state missing",
+            }
+            write_json(analysis_dir / "state_coverage_policy.json", coverage_policy)
 
             vm = ReplayVM(package)
             for _ in range(max(0, len(timeline.events))):
@@ -368,11 +381,13 @@ class ValidationKernel:
                 "event_count": package.get("timeline", {}).get("event_count", len(timeline.events)) if isinstance(package.get("timeline"), dict) else len(timeline.events),
                 "assertion_result": assertion_summary.get("result", "UNKNOWN"),
                 "state_assertion_result": state_assertions.get("result", "UNKNOWN"),
+                "state_coverage_result": coverage_policy.get("result", "UNKNOWN"),
                 "state_health": state_health,
                 "state_violation_count": coverage.get("violation_count", len(state.get("state_violations", []) or [])),
                 "transition_count": coverage.get("transition_count", len(state.get("transitions", []) or [])),
                 "event_graph": str(analysis_dir / "event_graph.json"),
                 "state_assertions": str(analysis_dir / "state_assertions.json"),
+                "state_coverage_policy": str(analysis_dir / "state_coverage_policy.json"),
                 "replay_vm_state": str(analysis_dir / "replay_vm_state.json"),
             }
             analyses.append(item)
@@ -388,6 +403,7 @@ class ValidationKernel:
                     "graph_edges": len(graph.edges),
                     "graph_warnings": len(graph.warnings),
                     "state_health": state_health,
+                    "state_coverage_result": coverage_policy.get("result", "UNKNOWN"),
                     "state_violation_count": item["state_violation_count"],
                     "transition_count": item["transition_count"],
                 },
@@ -430,8 +446,7 @@ class ValidationKernel:
         return unique
 
     def _default_state_assertion_dsl(self, profile: str) -> str:
-        policy_path = self.scripts_dir.parent / "references" / "optimization" / "state_assertion_policy.json"
-        policy = _load_json(policy_path)
+        policy = self._default_state_policy_payload()
         lines: List[str] = []
         common = policy.get("common", []) if isinstance(policy.get("common"), list) else []
         lines.extend(str(item) for item in common if str(item).strip())
@@ -446,17 +461,26 @@ class ValidationKernel:
             ]
         return "\n".join(lines) + "\n"
 
+    def _default_state_policy_payload(self) -> Dict[str, Any]:
+        policy_path = self.scripts_dir.parent / "references" / "optimization" / "state_assertion_policy.json"
+        return _load_json(policy_path)
+
     @staticmethod
     def _aggregate_runtime_analysis(analyses: List[Dict[str, Any]]) -> str:
         results = [str(item.get("state_assertion_result", "") or "").upper() for item in analyses]
+        coverage = [str(item.get("state_coverage_result", "") or "").upper() for item in analyses]
         health = [str(item.get("state_health", "") or "").upper() for item in analyses]
         if not results:
             return "SKIPPED"
-        if any(item == "FAIL" for item in results) or any(item == "FAIL" for item in health):
+        if any(item == "FAIL" for item in results) or any(item == "FAIL" for item in coverage) or any(item == "FAIL" for item in health):
             return "FAIL"
         if all(item == "SKIPPED" for item in results):
             return "SKIPPED"
-        if any(item in {"UNKNOWN", "ERROR"} for item in results) or any(item in {"WARN", "UNKNOWN", "ERROR"} for item in health):
+        if (
+            any(item in {"UNKNOWN", "ERROR"} for item in results)
+            or any(item in {"WARN", "UNKNOWN", "ERROR"} for item in coverage)
+            or any(item in {"WARN", "UNKNOWN", "ERROR"} for item in health)
+        ):
             return "WARN"
         return "PASS"
 
@@ -468,17 +492,18 @@ class ValidationKernel:
             f"- result: `{result}`",
             f"- items: `{len(analyses)}`",
             "",
-            "| Scenario | Profile | Events | Assertion | State Assertion | State Health | Violations | Transitions |",
+            "| Scenario | Profile | Events | Assertion | State/Coverage | State Health | Violations | Transitions |",
             "|---|---|---:|---|---|---|---:|---:|",
         ]
         for item in analyses:
             lines.append(
-                "| {scenario} | `{profile}` | {events} | `{assertion}` | `{state}` | `{health}` | {violations} | {transitions} |".format(
+                "| {scenario} | `{profile}` | {events} | `{assertion}` | `{state}`/`{coverage}` | `{health}` | {violations} | {transitions} |".format(
                     scenario=item.get("scenario_id", ""),
                     profile=item.get("profile", ""),
                     events=item.get("event_count", 0),
                     assertion=item.get("assertion_result", "UNKNOWN"),
                     state=item.get("state_assertion_result", "UNKNOWN"),
+                    coverage=item.get("state_coverage_result", "UNKNOWN"),
                     health=item.get("state_health", "UNKNOWN"),
                     violations=item.get("state_violation_count", 0),
                     transitions=item.get("transition_count", 0),

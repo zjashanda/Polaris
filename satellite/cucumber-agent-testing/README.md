@@ -251,9 +251,13 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 首唤醒 profile 已处理声卡播放工具初始化耗时：如果播放进程明显长于 wav 时长，Runtime 会用 `AudioCompleted - audio_duration_ms` 估算有效波形起点，再计算 `WakeDetected_within_3000ms`；仍无法估算时才输出 `TIMING_AMBIGUOUS`。WS63 `cp` 留空时，BDD/Runtime 都只要求 AP/ASR 唤醒闭环。
 
-当前本地 Runtime 还提供 adapter registry、capability matrix、event graph、state assertion DSL、Validation IR、Validation Kernel 生命周期、Kernel scene 调度和 analytics trend 入口，分别用于回答“这个项目能测什么、要占用什么资源、事件因果链是什么、最终状态是否安全、task/env 如何进入统一 IR、一次执行经历了哪些 kernel 阶段、scene 每个节点是否独立闭环、历史结果趋势如何”。adapter 单动作可通过 `run_adapter_action.py` 先 dry-run 渲染命令，真执行副作用必须显式 `--execute --allow-side-effects`。
+当前本地 Runtime 还提供 adapter registry、capability matrix、event graph、state assertion DSL、Validation IR、Validation Kernel 生命周期、Kernel scene 调度和 analytics trend 入口，分别用于回答“这个项目能测什么、要占用什么资源、事件因果链是什么、最终状态是否安全、task/env/scene/feature plan 如何进入统一 IR、一次执行经历了哪些 kernel 阶段、scene 每个节点是否独立闭环、历史结果趋势如何”。adapter 单动作可通过 `run_adapter_action.py` 先 dry-run 渲染命令，真执行副作用必须显式 `--execute --allow-side-effects`。
+
+`compile_validation_ir.py` 支持三种入口：`--task` 输出单个 `polaris.validation_ir.v1`，`--scene` 输出 scene 级 `polaris.validation_ir_bundle.v1`，`--feature-plan` 可把 `compile_feature.py` 生成的 `compiled_plan.json` 转成 feature 级 IR bundle。`run_kernel_scene.py --emit-ir-bundle` 可在调度前输出 `scene_validation_ir_bundle.json`，用于验证 scene node 是否已经落到同一套 IR 字段：`intent/preconditions/actions/expect/timeout/retry/cleanup/metadata`。
 
 `runtime_state.json` 已包含 `state_health`、`state_violations`、`coverage` 和 `transitions`。后续判断重启/崩溃、识别前因缺失、音频或媒体证据顺序不完整时，优先引用这些字段，不要只看最终场景 PASS/FAIL。
+
+`run_state_coverage_policy.py` 会把 `runtime_state.coverage` 按 profile 阈值转成 PASS/WARN/FAIL，例如首唤醒要求 WakeDetected 且禁止 Crash/Reboot，基础命令要求 ASRDetected 或 CommandDetected，联网恢复要求 NetworkLost 和 NetworkRecovered。Validation Kernel 后处理会把该结果写入 `state_coverage_policy.json` 并汇总到 `runtime_analysis.json`。
 
 `run_assertion_dsl.py` 已支持基础时序和业务链路 DSL：`EXPECT`、`FORBID`、`EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`。在线问答、音乐、新闻、相声等场景可先用它验证“识别后是否出现 TTS/Media 响应、响应是否在指定窗口内、播放持续是否达到阈值”，后续再把稳定规则沉淀进 profile 断言。
 
@@ -262,6 +266,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 `build_event_graph.py` 已输出 `risk_summary`，并补充媒体、云端响应、打断、重启/崩溃因果边。在线压测后分析异常时，优先看 `possible_reboot_after_activity`、`possible_crash_after_activity`、`media_interrupted`、`interrupt_to_recognition`、`media_started_to_completed` 等关系。
 
 `run_adapter_action.py` 默认 dry-run，不会真实占用串口/声卡/云端。当前 registry 已覆盖控制口 PA/上下电、AP 设备环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行必须显式追加 `--execute --allow-side-effects`。
+
+`plan_adapter_flow.py` 把常见前置/调试流程固定映射到 Adapter Executor，例如 `pa_recover`、`power_on`、`switch_device_env`、`ensure_online`、`wake_audio_file`、`set_volume`、`set_half_duplex`、`set_full_duplex`。它默认只渲染命令，真执行同样必须追加 `--execute --allow-side-effects`。
 
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 
