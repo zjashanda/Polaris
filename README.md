@@ -469,7 +469,7 @@ scripts/simulate_runtime.py         # Fake log -> replay smoke
 scripts/run_assertion_dsl.py        # EXPECT/FORBID/SEQUENCE/RESPONSE/DURATION DSL-lite
 scripts/inspect_device_adapters.py  # env -> adapter registry
 scripts/build_capability_matrix.py  # env -> project capability matrix
-scripts/build_event_graph.py        # timeline/run_dir -> causal event graph
+scripts/build_event_graph.py        # timeline/run_dir -> causal event graph + risk summary
 scripts/run_state_assertion_dsl.py  # runtime_state -> state assertions
 scripts/compile_validation_ir.py    # task + env -> Validation IR
 scripts/run_validation_kernel.py    # task + env -> Kernel lifecycle record

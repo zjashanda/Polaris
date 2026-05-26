@@ -259,6 +259,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `build_capability_matrix.py` 已把常见缺口拆细：音频回采 oracle、媒体日志响应 oracle、真实声学响应 oracle、云控权限、boot reason oracle。新项目只配串口和 Wi-Fi 后，先跑能力矩阵，就能看到哪些测试可直接执行、哪些需要补资料或补硬件。
 
+`build_event_graph.py` 已输出 `risk_summary`，并补充媒体、云端响应、打断、重启/崩溃因果边。在线压测后分析异常时，优先看 `possible_reboot_after_activity`、`possible_crash_after_activity`、`media_interrupted`、`interrupt_to_recognition`、`media_started_to_completed` 等关系。
+
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 
 ## 新功能怎么接入

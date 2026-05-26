@@ -43,6 +43,7 @@ class EventGraph:
     nodes: List[EventGraphNode]
     edges: List[EventGraphEdge]
     warnings: List[str] = field(default_factory=list)
+    risk_summary: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +51,7 @@ class EventGraph:
             "node_count": len(self.nodes),
             "edge_count": len(self.edges),
             "warnings": self.warnings,
+            "risk_summary": self.risk_summary,
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
         }
@@ -117,7 +119,13 @@ def build_event_graph(timeline: Timeline) -> EventGraph:
     wakes = timeline.find("WakeDetected")
     asrs = timeline.find("ASRDetected")
     commands = timeline.find("CommandDetected")
-    tts_or_media = timeline.find("TTSStarted") + timeline.find("MediaStarted")
+    tts_started = timeline.find("TTSStarted")
+    media_started = timeline.find("MediaStarted")
+    media_completed = timeline.find("MediaCompleted")
+    tts_or_media = sorted(tts_started + media_started, key=lambda event: int(event.timestamp_ms or 0))
+    responses_completed = sorted(media_completed, key=lambda event: int(event.timestamp_ms or 0))
+    interrupt_injected = timeline.find("InterruptInjected")
+    interrupt_completed = timeline.find("InterruptCompleted")
     network_lost = timeline.find("NetworkLost")
     network_recovered = timeline.find("NetworkRecovered")
     reboots = timeline.find("RebootDetected") + timeline.find("CrashDetected")
@@ -157,25 +165,93 @@ def build_event_graph(timeline: Timeline) -> EventGraph:
         if asr:
             _append_edge(edges, EventGraphEdge(asr.event_id, command.event_id, "asr_to_command", "high", _delta(asr, command)), seen)
     for media in tts_or_media:
+        command = _latest_before(commands, media, 15000)
         asr = _latest_before(asrs, media, 15000)
         wake = _latest_before(wakes, media, 15000)
-        if asr:
-            _append_edge(edges, EventGraphEdge(asr.event_id, media.event_id, "asr_to_response", "medium", _delta(asr, media)), seen)
+        relation_suffix = "tts_response" if media.event_type == "TTSStarted" else "media_response"
+        if command:
+            _append_edge(edges, EventGraphEdge(command.event_id, media.event_id, f"command_to_{relation_suffix}", "high", _delta(command, media)), seen)
+        elif asr:
+            _append_edge(edges, EventGraphEdge(asr.event_id, media.event_id, f"asr_to_{relation_suffix}", "medium", _delta(asr, media)), seen)
         elif wake:
             _append_edge(edges, EventGraphEdge(wake.event_id, media.event_id, "wake_to_response", "medium", _delta(wake, media)), seen)
+    for completed in responses_completed:
+        start = _latest_before(media_started + tts_started, completed, 300000)
+        if start:
+            relation = "tts_or_media_completed" if start.event_type == "TTSStarted" else "media_started_to_completed"
+            _append_edge(edges, EventGraphEdge(start.event_id, completed.event_id, relation, "high", _delta(start, completed)), seen)
+    for injected in interrupt_injected:
+        media = _latest_before(media_started + tts_started, injected, 300000)
+        if media:
+            _append_edge(edges, EventGraphEdge(media.event_id, injected.event_id, "media_interrupted", "medium", _delta(media, injected)), seen)
+        completed = _latest_before(interrupt_completed, injected, 0)
+        # _latest_before only searches backwards; find the first completion after injection.
+        if injected.timestamp_ms is not None:
+            after = [
+                event
+                for event in interrupt_completed
+                if event.timestamp_ms is not None and event.timestamp_ms >= injected.timestamp_ms and int(event.timestamp_ms - injected.timestamp_ms) <= 30000
+            ]
+            if after:
+                completed = sorted(after, key=lambda event: int(event.timestamp_ms or 0))[0]
+        if completed:
+            _append_edge(edges, EventGraphEdge(injected.event_id, completed.event_id, "interrupt_injected_to_completed", "high", _delta(injected, completed)), seen)
+        follow = None
+        if injected.timestamp_ms is not None:
+            candidates = [
+                event
+                for event in wakes + asrs + commands
+                if event.timestamp_ms is not None and event.timestamp_ms >= injected.timestamp_ms and int(event.timestamp_ms - injected.timestamp_ms) <= 10000
+            ]
+            if candidates:
+                follow = sorted(candidates, key=lambda event: int(event.timestamp_ms or 0))[0]
+        if follow:
+            _append_edge(edges, EventGraphEdge(injected.event_id, follow.event_id, "interrupt_to_recognition", "medium", _delta(injected, follow)), seen)
     for recovered in network_recovered:
         lost = _latest_before(network_lost, recovered, 120000)
         if lost:
             _append_edge(edges, EventGraphEdge(lost.event_id, recovered.event_id, "network_recovered_after_loss", "high", _delta(lost, recovered)), seen)
     for reboot in reboots:
-        anchor = _latest_before(wakes + asrs + commands + tts_or_media, reboot, 60000)
+        anchor = _latest_before(wakes + asrs + commands + tts_or_media + interrupt_injected + network_lost, reboot, 60000)
         if anchor:
-            _append_edge(edges, EventGraphEdge(anchor.event_id, reboot.event_id, "possible_failure_after_activity", "medium", _delta(anchor, reboot)), seen)
+            relation = "possible_crash_after_activity" if reboot.event_type == "CrashDetected" else "possible_reboot_after_activity"
+            _append_edge(edges, EventGraphEdge(anchor.event_id, reboot.event_id, relation, "medium", _delta(anchor, reboot)), seen)
 
     warnings: List[str] = []
     if wakes and not any(edge.relation == "audio_caused_wake" for edge in edges):
         warnings.append("WakeDetected exists but no audio_caused_wake edge was inferred.")
-    return EventGraph(nodes=nodes, edges=edges, warnings=warnings)
+    orphan_media_completed = [
+        event.event_id
+        for event in media_completed
+        if not any(edge.dst == event.event_id and edge.relation in {"media_started_to_completed", "tts_or_media_completed"} for edge in edges)
+    ]
+    if orphan_media_completed:
+        warnings.append(f"MediaCompleted exists without inferred MediaStarted/TTSStarted parent: {len(orphan_media_completed)} event(s).")
+    responses_without_upstream = [
+        event.event_id
+        for event in tts_or_media
+        if not any(edge.dst == event.event_id and edge.relation in {"command_to_tts_response", "command_to_media_response", "asr_to_tts_response", "asr_to_media_response", "wake_to_response"} for edge in edges)
+    ]
+    if responses_without_upstream:
+        warnings.append(f"TTS/Media response exists without wake/asr/command parent: {len(responses_without_upstream)} event(s).")
+    if reboots:
+        warnings.append(f"Reboot/Crash events observed: {len(reboots)}.")
+
+    relation_counts: Dict[str, int] = {}
+    for edge in edges:
+        relation_counts[edge.relation] = relation_counts.get(edge.relation, 0) + 1
+    risk_summary = {
+        "crash_events": len(timeline.find("CrashDetected")),
+        "reboot_events": len(timeline.find("RebootDetected")),
+        "network_loss_events": len(network_lost),
+        "interrupt_injected_events": len(interrupt_injected),
+        "media_started_events": len(media_started),
+        "media_completed_events": len(media_completed),
+        "orphan_media_completed": len(orphan_media_completed),
+        "responses_without_upstream": len(responses_without_upstream),
+        "relation_counts": dict(sorted(relation_counts.items())),
+    }
+    return EventGraph(nodes=nodes, edges=edges, warnings=warnings, risk_summary=risk_summary)
 
 
 def render_event_graph_markdown(graph: EventGraph) -> str:
@@ -198,5 +274,16 @@ def render_event_graph_markdown(graph: EventGraph) -> str:
         lines.extend(["", "## Warnings", ""])
         for warning in graph.warnings:
             lines.append(f"- {warning}")
+    if graph.risk_summary:
+        lines.extend(["", "## Risk Summary", ""])
+        for key, value in graph.risk_summary.items():
+            if key == "relation_counts":
+                continue
+            lines.append(f"- `{key}`: `{value}`")
+        relation_counts = graph.risk_summary.get("relation_counts", {})
+        if isinstance(relation_counts, dict) and relation_counts:
+            lines.extend(["", "## Relation Counts", ""])
+            for key, value in sorted(relation_counts.items()):
+                lines.append(f"- `{key}`: `{value}`")
     lines.append("")
     return "\n".join(lines)
