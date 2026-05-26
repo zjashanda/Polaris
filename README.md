@@ -225,6 +225,8 @@ runtime_state.json           # 状态机结果
 replay_package.json          # 完整 replay 包
 ```
 
+`runtime_state.json` 里重点看 `state_health`、`state_violations` 和 `coverage`：它们分别表示状态机健康度、Crash/Reboot/音频媒体顺序/识别前因等 guard 违规、以及状态迁移覆盖情况。
+
 ### 5.7 优化执行封装：执行记录、重试和资源预检
 
 `run_optimized_task.py` 是当前按两份 Runtime 优化方案新增的第一层工程化入口。它不会替换 `run_task.py`，而是在外层增加：
@@ -309,6 +311,8 @@ post_analysis/*/event_graph.json
 post_analysis/*/state_assertions.json
 post_analysis/*/replay_vm_state.json
 ```
+
+`runtime_analysis.json` 会同时汇总 profile 断言、默认状态断言和 `state_health`。如果出现 Crash 后继续业务、Reboot 后无恢复标记就继续识别、音频/媒体证据顺序不完整等状态机 guard 违规，会在这里单独呈现，便于区分稳定性问题、日志缺口和业务断言失败。
 
 ## 6. Task JSON 怎么写
 
@@ -479,7 +483,7 @@ docs/skill/runtime-implementation-matrix.md
 runtime/
   events.py                # ValidationEvent v1 schema，含 plugin、severity、tags、wall/monotonic 时间
   timeline.py              # monotonic timeline，断言使用相对单调时间
-  state_machine.py         # 运行状态机
+  state_machine.py         # 运行状态机，输出并行状态、迁移、guard 违规和覆盖率
   assertion_engine.py      # 固化断言逻辑
   replay.py                # replay package 构建
   kernel/

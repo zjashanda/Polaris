@@ -20,6 +20,7 @@
 | Resource Runtime MVP | serial/audio/network/cloud/power claim、conflict、local lock/release | `runtime/resource_runtime.py` |
 | Constraint Engine MVP | 项目、场景、副作用、串口拓扑、云环境、网络、打断 guard 校验 | `runtime/constraint_engine.py` |
 | Parallel State Snapshot | audio/recognition/media/network/power/cloud 并行状态 | `runtime/state_machine.py` |
+| State Guard / Coverage MVP | 输出 transitions、state_violations、state_health、coverage；识别 Crash 后业务事件、Reboot 后恢复证据不足、音频/媒体顺序缺口、识别缺少唤醒前因 | `runtime/state_machine.py`, `runtime/replay.py`, `runtime/validation_kernel.py` |
 | Scene Graph MVP | strategy -> DAG scene，constraint check，mutation | `runtime/scene_engine.py`, `scripts/generate_scene.py` |
 | Scene Runner MVP | scene node 顺序调用 `run_optimized_task.py` | `scripts/run_scene.py` |
 | Failure/Health MVP | failure fingerprint、health metrics、报告 | `runtime/failure_analysis.py`, `scripts/analyze_execution_store.py` |
@@ -47,7 +48,7 @@
 |---|---|---|
 | Validation Kernel | 已有 plugin kernel、Validation IR MVP、本地 lifecycle runner、runner 后 replay/event graph/state/replay_vm 侧证据、scene scheduler | adapter execute 尚未完全成为所有底层 tools 的唯一执行通道 |
 | Event Graph | 已有本地因果图 MVP | 事件因果仍是启发式，尚未覆盖所有云端/媒体/设备协议链路 |
-| Hierarchical StateMachine | 已有并行状态快照和 State Assertion DSL-lite | 尚未实现完整层级状态树、状态迁移 guard 和状态覆盖率统计 |
+| Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率和 State Assertion DSL-lite | 尚未实现完整层级状态树和状态覆盖率阈值策略 |
 | Capability Runtime | 已有项目能力矩阵 MVP | codec、音频回采、真实出声质量、细粒度云控权限仍需继续补充 |
 | Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP | 现有 tools 尚未完全改造成统一 adapter execute interface |
 | IR Compiler | 已有 Validation IR MVP | 尚未把 feature/task/agent/scene 全入口统一到一个最终 IR schema |
@@ -116,3 +117,10 @@
 | Kernel runner 后处理 | 使用既有 WB01 真机 execution_record 发现 runtime replay package，自动生成 `runtime_analysis.json`，state assertion PASS |
 | Kernel Scene Scheduler | WB01 `scene_smoke` dry-run + execute-runner 3 节点 PASS，节点均输出独立 `kernel_record.json` |
 | Kernel Scene Scheduler | WS63 `scene_smoke` dry-run + execute-runner 3 节点 PASS，节点均输出独立 `kernel_record.json` |
+
+## 2026-05-26 StateMachine Guard/Coverage 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| State Guard / Coverage | 使用 WB01 既有 `first_wake` 真机日志重放，`state_health=PASS`，`transition_count=24`，`violation_count=0` |
+| Kernel runtime_analysis | `runtime_analysis.md/json` 已汇总 `state_health`、`state_violation_count`、`transition_count`，用于区分稳定性问题、日志缺口和业务断言失败 |

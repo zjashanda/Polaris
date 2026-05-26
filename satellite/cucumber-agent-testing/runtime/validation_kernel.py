@@ -340,6 +340,8 @@ class ValidationKernel:
             (analysis_dir / "event_graph_report.md").write_text(render_event_graph_markdown(graph), encoding="utf-8")
 
             state = package.get("runtime_state", {}) if isinstance(package.get("runtime_state"), dict) else {}
+            coverage = state.get("coverage", {}) if isinstance(state.get("coverage"), dict) else {}
+            state_health = str(state.get("state_health", "UNKNOWN") or "UNKNOWN")
             policy_dsl = self._default_state_assertion_dsl(profile)
             (analysis_dir / "default_state_assertions.dsl").write_text(policy_dsl, encoding="utf-8")
             state_assertions = evaluate_state_dsl(state, policy_dsl) if state else {
@@ -366,6 +368,9 @@ class ValidationKernel:
                 "event_count": package.get("timeline", {}).get("event_count", len(timeline.events)) if isinstance(package.get("timeline"), dict) else len(timeline.events),
                 "assertion_result": assertion_summary.get("result", "UNKNOWN"),
                 "state_assertion_result": state_assertions.get("result", "UNKNOWN"),
+                "state_health": state_health,
+                "state_violation_count": coverage.get("violation_count", len(state.get("state_violations", []) or [])),
+                "transition_count": coverage.get("transition_count", len(state.get("transitions", []) or [])),
                 "event_graph": str(analysis_dir / "event_graph.json"),
                 "state_assertions": str(analysis_dir / "state_assertions.json"),
                 "replay_vm_state": str(analysis_dir / "replay_vm_state.json"),
@@ -382,6 +387,9 @@ class ValidationKernel:
                     "graph_nodes": len(graph.nodes),
                     "graph_edges": len(graph.edges),
                     "graph_warnings": len(graph.warnings),
+                    "state_health": state_health,
+                    "state_violation_count": item["state_violation_count"],
+                    "transition_count": item["transition_count"],
                 },
             )
 
@@ -441,13 +449,14 @@ class ValidationKernel:
     @staticmethod
     def _aggregate_runtime_analysis(analyses: List[Dict[str, Any]]) -> str:
         results = [str(item.get("state_assertion_result", "") or "").upper() for item in analyses]
+        health = [str(item.get("state_health", "") or "").upper() for item in analyses]
         if not results:
             return "SKIPPED"
-        if any(item == "FAIL" for item in results):
+        if any(item == "FAIL" for item in results) or any(item == "FAIL" for item in health):
             return "FAIL"
         if all(item == "SKIPPED" for item in results):
             return "SKIPPED"
-        if any(item in {"UNKNOWN", "ERROR"} for item in results):
+        if any(item in {"UNKNOWN", "ERROR"} for item in results) or any(item in {"WARN", "UNKNOWN", "ERROR"} for item in health):
             return "WARN"
         return "PASS"
 
@@ -459,17 +468,20 @@ class ValidationKernel:
             f"- result: `{result}`",
             f"- items: `{len(analyses)}`",
             "",
-            "| Scenario | Profile | Events | Assertion | State Assertion |",
-            "|---|---|---:|---|---|",
+            "| Scenario | Profile | Events | Assertion | State Assertion | State Health | Violations | Transitions |",
+            "|---|---|---:|---|---|---|---:|---:|",
         ]
         for item in analyses:
             lines.append(
-                "| {scenario} | `{profile}` | {events} | `{assertion}` | `{state}` |".format(
+                "| {scenario} | `{profile}` | {events} | `{assertion}` | `{state}` | `{health}` | {violations} | {transitions} |".format(
                     scenario=item.get("scenario_id", ""),
                     profile=item.get("profile", ""),
                     events=item.get("event_count", 0),
                     assertion=item.get("assertion_result", "UNKNOWN"),
                     state=item.get("state_assertion_result", "UNKNOWN"),
+                    health=item.get("state_health", "UNKNOWN"),
+                    violations=item.get("state_violation_count", 0),
+                    transitions=item.get("transition_count", 0),
                 )
             )
         lines.append("")
