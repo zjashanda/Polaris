@@ -17,15 +17,24 @@ from .assertion_engine import (
     evaluate_wake_interrupt,
 )
 from .events import ValidationEvent
+from .capability_runtime import CapabilityMatrix, CapabilityItem
+from .device_adapter import AdapterRegistry, DeviceAdapter
+from .event_graph import EventGraph
 from .failure_analysis import FailureFingerprint
 from .kernel import PluginContext, PluginManager, RuntimePlugin
 from .resource_runtime import ResourceClaim, ResourceSnapshot
 from .scene_engine import SceneGraph, SceneNode
 from .timeline import Timeline
+from .validation_ir import ValidationIR
 
 __all__ = [
     "Timeline",
     "ValidationEvent",
+    "AdapterRegistry",
+    "CapabilityItem",
+    "CapabilityMatrix",
+    "DeviceAdapter",
+    "EventGraph",
     "FailureFingerprint",
     "PluginContext",
     "PluginManager",
@@ -34,6 +43,7 @@ __all__ = [
     "ResourceSnapshot",
     "SceneGraph",
     "SceneNode",
+    "ValidationIR",
     "evaluate_attribution_validator",
     "evaluate_basic_command",
     "evaluate_command_interrupt",
