@@ -113,7 +113,7 @@ class ManagedSession:
 
 
 def stamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -476,7 +476,7 @@ def wait_for_managed_heartbeat(session_dir: Path, timeout_s: float = 25.0) -> Di
     raise RuntimeError(f"managed logger heartbeat not ready: {heartbeat}")
 
 
-def start_managed_session(run_dir: Path) -> tuple[ManagedSession, subprocess.Popen[str]]:
+def start_managed_session(run_dir: Path, context: Optional[Dict[str, Any]] = None) -> tuple[ManagedSession, subprocess.Popen[str]]:
     session_dir = run_dir / "session"
     session_dir.mkdir(parents=True, exist_ok=True)
     previous_result = read_marker(".current_result_dir")
@@ -492,7 +492,16 @@ def start_managed_session(run_dir: Path) -> tuple[ManagedSession, subprocess.Pop
         "start",
         "--session-dir",
         str(session_dir),
+        "--no-sync-config",
     ]
+    context = context or {}
+    baudrate = str(context.get("baudrate", "") or "").strip()
+    if baudrate:
+        cmd.extend(["--baudrate", baudrate])
+    for key, option in (("ap_port", "--ap-port"), ("cp_port", "--cp-port"), ("asr_port", "--asr-port")):
+        value = str(context.get(key, "") or "").strip()
+        if value:
+            cmd.extend([option, value])
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     log_handle = logger_log.open("w", encoding="utf-8", newline="")
     log_handle.write(f"$ {quote_cmd(cmd)}\n")
@@ -680,6 +689,17 @@ def summarize_first_wake(run_dir: Path) -> Dict[str, Any]:
     asr_wake = int_metric(aggregate, "wb_wake_count") + int_metric(aggregate, "wb_online_wake_count")
     aggregate["asr_wake_count"] = asr_wake
     playback_ok = bool(playback_returncodes) and all(code == 0 for code in playback_returncodes)
+    plan_payload = read_json_safe(run_dir / "execution_plan.json") or {}
+    context = plan_payload.get("context", {}) if isinstance(plan_payload.get("context"), dict) else {}
+    cp_required = bool(str(context.get("cp_port", "") or "").strip())
+    asr_required = bool(str(context.get("asr_port", "") or "").strip())
+    missing_sources: List[str] = []
+    if cp_required and cp_wake < 1:
+        missing_sources.append("CP")
+    if ap_wake < 1:
+        missing_sources.append("AP")
+    if asr_required and asr_wake < 1:
+        missing_sources.append("ASR")
 
     if not playback_ok:
         result = "BLOCKED"
@@ -689,14 +709,19 @@ def summarize_first_wake(run_dir: Path) -> Dict[str, Any]:
         result = "BLOCKED"
         attribution = "serial_logger_or_ports"
         reason = "播放成功但串口窗口无日志，优先检查 logger/串口。"
-    elif cp_wake >= 1 and ap_wake >= 1 and asr_wake >= 1:
+    elif not missing_sources:
         result = "PASS"
         attribution = "pass"
-        reason = "播放成功，CP/AP/ASR 均观察到唤醒闭环。"
+        expected = ["AP"]
+        if cp_required:
+            expected.insert(0, "CP")
+        if asr_required:
+            expected.append("ASR")
+        reason = f"播放成功，{'/'.join(expected)} 均观察到唤醒闭环。"
     else:
         result = "FAIL"
         attribution = "firmware_device_or_audio_path"
-        reason = f"播放成功但唤醒证据不完整：CP={cp_wake}, AP={ap_wake}, ASR={asr_wake}。"
+        reason = f"播放成功但唤醒证据不完整：CP={cp_wake}, AP={ap_wake}, ASR={asr_wake}，缺失={','.join(missing_sources)}。"
 
     return {
         "result": result,
@@ -1418,7 +1443,7 @@ def main() -> int:
         logger_proc: Optional[subprocess.Popen[str]] = None
         try:
             if args.mode == "execute" and args.manage_session:
-                managed_session, logger_proc = start_managed_session(run_dir)
+                managed_session, logger_proc = start_managed_session(run_dir, compiled_payload.get("context", {}))
                 plan_payload = load_json(run_dir / "execution_plan.json")
                 plan_payload["managed_session"] = managed_session_payload(managed_session)
                 write_json(run_dir / "execution_plan.json", plan_payload)
@@ -1484,7 +1509,7 @@ def main() -> int:
     logger_proc: Optional[subprocess.Popen[str]] = None
     try:
         if args.mode == "execute" and args.manage_session:
-            managed_session, logger_proc = start_managed_session(run_dir)
+            managed_session, logger_proc = start_managed_session(run_dir, context)
             # Re-resolve context after marker update, but keep user-provided overrides.
             context = resolve_context(args, mapping, run_dir)
             plans = filter_plans(build_plans(parsed, mapping, context), args.tag)

@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import serial
 
@@ -114,8 +114,24 @@ class PortState:
             self.handle.close()
 
 
+def build_logger_port_map(*, ap_port: str = "", cp_port: str = "", asr_port: str = "") -> dict[str, dict[str, Any]]:
+    if not any((ap_port, cp_port, asr_port)):
+        return serial_logger_ports()
+    result: dict[str, dict[str, Any]] = {}
+    cp = str(cp_port or "").strip().upper()
+    asr = str(asr_port or "").strip().upper()
+    ap = str(ap_port or "").strip().upper()
+    if cp:
+        result[cp] = {"role": "cskcp", "writable": False}
+    if asr:
+        result[asr] = {"role": "asr", "writable": True}
+    if ap:
+        result[ap] = {"role": "cskap", "writable": True}
+    return result
+
+
 class SessionLogger:
-    def __init__(self, session_dir: Path, baudrate: int) -> None:
+    def __init__(self, session_dir: Path, baudrate: int, port_map: Optional[dict[str, dict[str, Any]]] = None) -> None:
         self.session_dir = session_dir
         self.baudrate = baudrate
         self.control_path = queue_path(session_dir, create=True)
@@ -136,7 +152,7 @@ class SessionLogger:
         self._queue_last_payload: Optional[dict] = None
         self._queue_last_result: Optional[str] = None
         self._queue_last_error: Optional[str] = None
-        self.port_map = serial_logger_ports()
+        self.port_map = port_map or serial_logger_ports()
         self.ports: Dict[str, PortState] = {}
         for port, meta in self.port_map.items():
             self.ports[port] = PortState(
@@ -453,9 +469,14 @@ def cmd_start(args: argparse.Namespace) -> int:
     session_dir = resolve_session_dir(args.session_dir)
     ensure_dir(session_dir)
     baudrate = args.baudrate if args.baudrate is not None else get_baudrate()
-    if args.baudrate is not None:
+    if args.baudrate is not None and not args.no_sync_config:
         set_baudrate(args.baudrate, source="polaris_serial_harness.start")
-    logger = SessionLogger(session_dir=session_dir, baudrate=baudrate)
+    port_map = build_logger_port_map(
+        ap_port=args.ap_port or "",
+        cp_port=args.cp_port or "",
+        asr_port=args.asr_port or "",
+    )
+    logger = SessionLogger(session_dir=session_dir, baudrate=baudrate, port_map=port_map)
     logger.run()
     return 0
 
@@ -493,6 +514,10 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="start a continuous logging session")
     start.add_argument("--session-dir", default=None)
     start.add_argument("--baudrate", type=int, default=None, help="default: config/polaris_local_ports.json baudrate")
+    start.add_argument("--no-sync-config", action="store_true", help="use explicit session settings without updating local config")
+    start.add_argument("--ap-port", default="", help="explicit AP log port for this session")
+    start.add_argument("--cp-port", default="", help="explicit CP log port for this session; empty disables CP")
+    start.add_argument("--asr-port", default="", help="explicit ASR/upper log port for this session")
     start.set_defaults(func=cmd_start)
 
     send = sub.add_parser("send", help="queue a command to a writable serial port")

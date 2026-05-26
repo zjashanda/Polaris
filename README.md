@@ -372,6 +372,13 @@ CrashDetected
 | `PASS_WITH_SKIPPED_TIMING` | 主功能通过，但部分时序证据不足，只能跳过时序断言。 |
 | `TIMING_AMBIGUOUS` | 临界超时或播报占用导致时序不可稳定归因，需要复核。 |
 
+首唤醒时序的锚点策略已经固化到 `runtime/assertion_engine.py`：
+
+- 优先使用真实 `AudioInjected` 到首个物理唤醒簇的时差。
+- 如果主机播放进程明显长于 wav 时长，说明 `AudioInjected` 更像“播放进程启动”而不是“声波到达设备”；此时优先用 `AudioCompleted - audio_duration_ms` 估算有效波形起点。
+- 如果仍无法稳定估算，但唤醒落在播放窗口内，结果标记为 `TIMING_AMBIGUOUS`，不直接归因为固件超时。
+- WB01 要求 CP/AP/ASR 唤醒闭环；WS63 没有 CP 时按 AP/ASR 闭环断言。
+
 归因原则：
 
 - 没有发音频却出现 wake/ASR/command，要记录为疑似误唤醒或误识别。
@@ -395,6 +402,24 @@ references/optimization/
 ```
 
 这一步的目标不是替代现有 Cucumber runner，而是给每次执行补上“可审计上下文”。后续做场景引擎、失败聚类、设备健康度时，都以 `execution_record.json` 为输入。
+
+继续对齐两份优化方案后，当前还提供这些轻量入口：
+
+```text
+scripts/generate_scene.py           # strategy -> scene graph
+scripts/run_scene.py                # scene graph -> run_optimized_task
+scripts/analyze_execution_store.py  # execution_record -> failure fingerprint / health report
+scripts/replay_vm.py                # replay package -> VM-lite snapshot/time travel
+scripts/simulate_runtime.py         # Fake log -> replay smoke
+scripts/run_assertion_dsl.py        # EXPECT/FORBID DSL-lite
+docs/skill/runtime-implementation-matrix.md
+```
+
+本轮真机 smoke 已验证：
+
+- WB01：`first_wake` 通过，managed session 使用 COM13/COM12/COM14，BDD 观察到 CP/AP/ASR 闭环，Runtime PASS。
+- WS63：`first_wake` 通过，managed session 使用 COM20/COM16，BDD 观察到 AP/ASR 闭环，Runtime PASS。
+- `run_optimized_task.py` 已修正聚合逻辑，会按 scenario/runtime 结果输出 `FAIL`、`BLOCKED`、`TIMING_AMBIGUOUS` 或 `PASS`，不会把 `status=DONE` 误当 PASS。
 
 ## 10. Event Runtime Phase 1 结构
 

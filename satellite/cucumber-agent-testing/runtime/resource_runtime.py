@@ -9,8 +9,15 @@ can catch obvious conflicts before a long true-device run starts.
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Iterable, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, Iterable, Iterator, List, Tuple
 
 
 @dataclass
@@ -54,6 +61,19 @@ class ResourceSnapshot:
             "conflicts": [item.to_dict() for item in self.conflicts],
             "warnings": self.warnings,
         }
+
+
+@dataclass
+class ResourceLock:
+    claim: ResourceClaim
+    lock_path: str
+    run_id: str
+    acquired_at: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = asdict(self)
+        payload["claim"] = self.claim.to_dict()
+        return payload
 
 
 def _nested(payload: Dict[str, Any], *keys: str) -> Any:
@@ -148,3 +168,100 @@ def build_resource_snapshot(env_payload: Dict[str, Any], task: Dict[str, Any] | 
     if not _text(_nested(env_payload, "audio", "default_playback_device_key")):
         warnings.append("audio.default_playback_device_key is empty; default render device will be used")
     return ResourceSnapshot(claims=claims, conflicts=detect_conflicts(claims), warnings=warnings)
+
+
+def _safe_lock_name(claim: ResourceClaim) -> str:
+    material = f"{claim.resource_type}_{claim.resource_id}_{claim.owner}".lower()
+    return re.sub(r"[^a-z0-9_.-]+", "_", material).strip("_") + ".lock"
+
+
+def _read_lock(path: Path) -> Dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+class ResourceLockManager:
+    """File-based local resource lock manager.
+
+    The lock scope is intentionally local-machine only. It prevents two Polaris
+    tasks in this workspace from using the same serial/audio/power resource at
+    the same time without adding an external service.
+    """
+
+    def __init__(self, lock_root: Path, *, stale_after_s: int = 6 * 60 * 60) -> None:
+        self.lock_root = lock_root
+        self.stale_after_s = stale_after_s
+        self.lock_root.mkdir(parents=True, exist_ok=True)
+
+    def cleanup_stale(self) -> List[Dict[str, Any]]:
+        removed: List[Dict[str, Any]] = []
+        now = time.time()
+        for path in self.lock_root.glob("*.lock"):
+            payload = _read_lock(path)
+            acquired_at = float(payload.get("acquired_at", 0) or 0)
+            pid = int(payload.get("pid", 0) or 0)
+            stale_by_age = acquired_at and now - acquired_at > self.stale_after_s
+            stale_by_pid = pid and not _pid_exists(pid)
+            if stale_by_age or stale_by_pid:
+                removed.append({"lock_path": str(path), "payload": payload, "stale_by_age": stale_by_age, "stale_by_pid": stale_by_pid})
+                path.unlink(missing_ok=True)
+        return removed
+
+    def acquire(self, claims: List[ResourceClaim], *, run_id: str = "", owner: str = "polaris") -> List[ResourceLock]:
+        self.cleanup_stale()
+        acquired: List[ResourceLock] = []
+        run_id = run_id or uuid.uuid4().hex
+        try:
+            for claim in claims:
+                if claim.shared:
+                    continue
+                path = self.lock_root / _safe_lock_name(claim)
+                payload = {
+                    "run_id": run_id,
+                    "owner": owner,
+                    "pid": os.getpid(),
+                    "acquired_at": time.time(),
+                    "claim": claim.to_dict(),
+                }
+                try:
+                    with path.open("x", encoding="utf-8") as handle:
+                        json.dump(payload, handle, ensure_ascii=False, indent=2)
+                except FileExistsError as exc:
+                    existing = _read_lock(path)
+                    raise RuntimeError(f"resource locked: {claim.resource_type}:{claim.resource_id} by {existing}") from exc
+                acquired.append(ResourceLock(claim=claim, lock_path=str(path), run_id=run_id, acquired_at=payload["acquired_at"]))
+            return acquired
+        except Exception:
+            self.release(acquired)
+            raise
+
+    def release(self, locks: List[ResourceLock]) -> None:
+        for lock in reversed(locks):
+            path = Path(lock.lock_path)
+            payload = _read_lock(path)
+            if not payload or payload.get("run_id") == lock.run_id:
+                path.unlink(missing_ok=True)
+
+
+@contextmanager
+def locked_resources(lock_root: Path, claims: List[ResourceClaim], *, run_id: str = "", owner: str = "polaris") -> Iterator[List[ResourceLock]]:
+    manager = ResourceLockManager(lock_root)
+    locks = manager.acquire(claims, run_id=run_id, owner=owner)
+    try:
+        yield locks
+    finally:
+        manager.release(locks)
+
+
+def _pid_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True

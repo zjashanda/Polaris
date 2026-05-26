@@ -337,18 +337,46 @@ def resolve_configured_port(port: str) -> str:
 
     Older Polaris tools still pass the original COM names as role shorthand.
     Keeping the translation here makes those tools inherit
-    `config/polaris_local_ports.json` without having to patch every caller.
+    the current managed session first, then the local config, without having
+    to patch every caller.
     """
     normalized = str(port).strip().upper()
     role = CANONICAL_PORT_ROLES.get(normalized)
     if not role:
         return normalized
+    session_port = _session_port_for_role(role)
+    if session_port:
+        return session_port
     try:
         from tools.core.polaris_config import get_port
 
         return get_port(role)
     except Exception:
         return normalized
+
+
+def _session_port_for_role(role: str) -> str:
+    aliases = {
+        "cp": {"cp", "cskcp"},
+        "asr": {"asr", "upper", "wb01", "ws63"},
+        "ap": {"ap", "cskap"},
+    }.get(role, {role})
+    try:
+        session_dir = current_session_dir()
+        path = manifest_path(session_dir=session_dir)
+        if not path.exists():
+            return ""
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        ports = payload.get("ports", {}) if isinstance(payload, dict) else {}
+        if not isinstance(ports, dict):
+            return ""
+        for port, meta in ports.items():
+            label = str((meta or {}).get("role", "") if isinstance(meta, dict) else "").strip().lower()
+            if label in aliases:
+                return str(port).strip().upper()
+    except Exception:
+        return ""
+    return ""
 
 
 def read_lines_between(

@@ -42,6 +42,43 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _iso_ms(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(datetime.fromisoformat(text).timestamp() * 1000)
+    except Exception:
+        return None
+
+
+def _sidecar_audio_duration_ms(audio_file: Any) -> int | None:
+    """Read the generated audio metadata next to a wav file when available."""
+    text = str(audio_file or "").strip()
+    if not text:
+        return None
+    meta = Path(text).with_suffix(".json")
+    if not meta.exists():
+        return None
+    try:
+        payload = _json_load(meta)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _optional_int(payload.get("duration_ms"))
+
+
+def _playback_duration_payload(payload: Dict[str, Any], audio_file: Any) -> Dict[str, Any]:
+    started_ms = _iso_ms(payload.get("playback_started_at") or payload.get("process_started_at"))
+    finished_ms = _iso_ms(payload.get("finished_at"))
+    process_duration_ms = finished_ms - started_ms if started_ms is not None and finished_ms is not None else None
+    return {
+        "audio_duration_ms": _sidecar_audio_duration_ms(audio_file),
+        "playback_process_duration_ms": process_duration_ms,
+    }
+
+
 def _status_event(prefix: str, result: str) -> str:
     normalized = str(result or "").strip().upper()
     if normalized == "PASS":
@@ -99,13 +136,15 @@ def parse_playback_json(path: Path) -> List[ValidationEvent]:
     events: List[ValidationEvent] = []
     started = str(payload.get("playback_started_at", "") or "")
     finished = str(payload.get("finished_at", "") or "")
+    audio_file = payload.get("audio_file", "")
     common = {
-        "audio_file": payload.get("audio_file", ""),
+        "audio_file": audio_file,
         "device_key": payload.get("device_key", ""),
         "returncode": payload.get("returncode"),
         "playback_device": payload.get("playback_device", ""),
         "timestamp_source": "playback_json",
     }
+    common.update(_playback_duration_payload(payload, audio_file))
     if started:
         events.append(_event_from_timestamp(path, 1, started, "AudioInjected", common))
     if finished:
@@ -139,6 +178,7 @@ def parse_generic_playback_artifact(path: Path) -> List[ValidationEvent]:
             if str(item) == "--audio-file" and index + 1 < len(cmd):
                 common["audio_file"] = str(cmd[index + 1])
                 break
+    common.update(_playback_duration_payload(payload, common.get("audio_file", "")))
     return [
         _event_from_timestamp(path, 1, str(payload.get("playback_started_at", "")), "AudioInjected", common),
         _event_from_timestamp(path, 2, str(payload.get("finished_at", "")), "AudioCompleted", common),

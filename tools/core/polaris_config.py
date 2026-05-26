@@ -298,12 +298,40 @@ def serial_logger_ports() -> dict[str, dict[str, Any]]:
 
 def configured_log_ports() -> list[str]:
     """Return CP/ASR/AP log ports from local config, preserving order and uniqueness."""
+    session_ports = _configured_log_ports_from_session()
+    if session_ports:
+        return session_ports
     ports: list[str] = []
     for role in ("cp", "asr", "ap"):
         port = get_port(role)
         if port and port not in ports:
             ports.append(port)
     return ports
+
+
+def _configured_log_ports_from_session() -> list[str]:
+    try:
+        from tools.core.polaris_runtime import current_session_dir, manifest_path
+
+        path = manifest_path(session_dir=current_session_dir())
+        if not path.exists():
+            return []
+        payload = read_json(path)
+        port_map = payload.get("ports", {}) if isinstance(payload.get("ports"), dict) else {}
+        ordered: list[str] = []
+        for role in ("cskcp", "cp", "asr", "upper", "wb01", "ws63", "cskap", "ap"):
+            for port, meta in port_map.items():
+                if not isinstance(meta, dict):
+                    continue
+                if str(meta.get("role", "")).strip().lower() == role:
+                    value = normalize_port(port)
+                    if value and value not in ordered:
+                        ordered.append(value)
+        if ordered:
+            return ordered
+        return [normalize_port(port) for port in port_map if normalize_port(port)]
+    except Exception:
+        return []
 
 
 def add_canonical_log_aliases(logs: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -314,7 +342,12 @@ def add_canonical_log_aliases(logs: dict[str, list[str]]) -> dict[str, list[str]
     still preserving the actual configured-port keys in the evidence payload.
     """
     for role, canonical_port in CANONICAL_LOG_PORTS.items():
-        configured_port = get_port(role)
+        try:
+            from tools.core.polaris_runtime import resolve_configured_port
+
+            configured_port = resolve_configured_port(canonical_port)
+        except Exception:
+            configured_port = get_port(role)
         if canonical_port not in logs and configured_port in logs:
             logs[canonical_port] = logs[configured_port]
     return logs

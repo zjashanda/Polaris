@@ -249,6 +249,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `--runtime-strict` 的含义是：BDD 原结果仍会保留到 `bdd_result_without_runtime`；如果 Runtime profile 输出 `FAIL`/`ERROR`/`BLOCKED`/`TIMING_AMBIGUOUS`，最终场景结果会按 Runtime 升级后的结果输出。当前已用真机 PASS run 验证该开关不会导致 PASS 场景回归；建议先在 summarize/replay 阶段启用，再逐步用于正式执行。
 
+首唤醒 profile 已处理声卡播放工具初始化耗时：如果播放进程明显长于 wav 时长，Runtime 会用 `AudioCompleted - audio_duration_ms` 估算有效波形起点，再计算 `WakeDetected_within_3000ms`；仍无法估算时才输出 `TIMING_AMBIGUOUS`。WS63 `cp` 留空时，BDD/Runtime 都只要求 AP/ASR 唤醒闭环。
+
 Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出 `recognition_observations`，用于追溯“设备到底识别了什么”。如果本轮没有播放某个词，但该字段里出现了对应 wake/ASR/command 结果，就不能简单当作 PASS 旁证，需要按误唤醒或误识别归因。
 
 ## 新功能怎么接入

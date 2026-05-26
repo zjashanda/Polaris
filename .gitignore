@@ -1,5 +1,6 @@
 # Runtime output
 oldTime/
+config/
 satellite/cucumber-agent-testing/debug/
 result/
 cache/

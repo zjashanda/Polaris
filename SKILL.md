@@ -47,6 +47,7 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 
 - WB01：配置 `ap/cp/asr/control` 四个串口。
 - WS63：配置 `ap/upper/control` 三个串口，`cp` 留空。
+- 真机执行时 managed session 必须使用当前任务/env-file 的串口；不要让根目录 `active_project` 或旧 `config/` 缓存影响另一台设备。
 - 没有单独声卡时，`default_playback_device_key` 留空，使用电脑默认声卡。
 - 声卡播放返回 0 但设备无唤醒时，先在控制口执行 `uut-pa.on` 和 `pa-enable.set 0 17 0 1`。
 - API 场景要先切设备端 UAT/SIT/PRO 环境，再调用接口。
@@ -81,3 +82,6 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - 新增任务优先走 `satellite/cucumber-agent-testing/scripts/run_optimized_task.py`。
 - 它会在现有 `run_task.py` 外层生成 `execution_record.json`、`attempts.jsonl`、`state/before.json`、`state/after.json`、`state_diff.json`。
 - 执行记录、重试、资源/约束预检优先走 `run_optimized_task.py`；只有调试底层 Cucumber runner 时才直接用 `run_task.py`。
+- 场景生成/执行走 `generate_scene.py` 和 `run_scene.py`；失败和健康度分析走 `analyze_execution_store.py`。
+- Replay VM-lite、Simulation-lite、Assertion DSL-lite 分别走 `replay_vm.py`、`simulate_runtime.py`、`run_assertion_dsl.py`。
+- 首次唤醒时序不要直接拿播放进程启动当唯一锚点；如播放进程明显长于 wav 时长，优先按 `AudioCompleted - audio_duration_ms` 估算有效波形起点，无法估算才输出 `TIMING_AMBIGUOUS`。

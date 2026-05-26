@@ -193,6 +193,64 @@ class MediaWindow:
         }
 
 
+@dataclass
+class AudioWindow:
+    index: int
+    start_ms: int
+    end_ms: int
+    start_event_id: str
+    end_event_id: str
+    source: str
+    audio_file: str = ""
+    audio_duration_ms: Optional[int] = None
+    playback_process_duration_ms: Optional[int] = None
+
+    @property
+    def duration_ms(self) -> int:
+        return self.end_ms - self.start_ms
+
+    @property
+    def suspicious_timing(self) -> bool:
+        expected = self.audio_duration_ms
+        observed = self.playback_process_duration_ms or self.duration_ms
+        if expected is not None and expected >= 0:
+            return observed > expected + max(3000, expected * 3)
+        return observed > 10000
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "index": self.index,
+            "start_ms": self.start_ms,
+            "end_ms": self.end_ms,
+            "duration_ms": self.duration_ms,
+            "start_event_id": self.start_event_id,
+            "end_event_id": self.end_event_id,
+            "source": self.source,
+            "audio_file": self.audio_file,
+            "audio_duration_ms": self.audio_duration_ms,
+            "playback_process_duration_ms": self.playback_process_duration_ms,
+            "suspicious_timing": self.suspicious_timing,
+        }
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _payload_int(events: List[Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        for event in events:
+            value = _optional_int((event.payload or {}).get(key))
+            if value is not None:
+                return value
+    return None
+
+
 def cluster_wake_events(timeline: Timeline, *, gap_ms: int = 2500) -> List[WakeCluster]:
     """Group duplicate wake markers from AP/CP/ASR into one physical wake."""
     wake_events = timeline.find("WakeDetected")
@@ -253,6 +311,48 @@ def build_media_windows(timeline: Timeline, *, max_duration_ms: int = 60000) -> 
     return windows
 
 
+def build_audio_windows(timeline: Timeline, *, max_duration_ms: int = 120000) -> List[AudioWindow]:
+    starts = [event for event in timeline.find("AudioInjected") if event.timestamp_ms is not None]
+    stops = [event for event in timeline.find("AudioCompleted") if event.timestamp_ms is not None]
+    starts.sort(key=lambda item: int(item.timestamp_ms or 0))
+    stops.sort(key=lambda item: int(item.timestamp_ms or 0))
+    used_stops: set[str] = set()
+    windows: List[AudioWindow] = []
+    for start in starts:
+        start_ms = int(start.timestamp_ms or 0)
+        start_audio = str((start.payload or {}).get("audio_file", "") or "")
+        candidates = []
+        for stop in stops:
+            if stop.event_id in used_stops or stop.timestamp_ms is None:
+                continue
+            stop_ms = int(stop.timestamp_ms)
+            if stop_ms < start_ms or stop_ms - start_ms > max_duration_ms:
+                continue
+            stop_audio = str((stop.payload or {}).get("audio_file", "") or "")
+            if start_audio and stop_audio and start_audio != stop_audio:
+                continue
+            candidates.append(stop)
+        if not candidates:
+            continue
+        stop = candidates[0]
+        used_stops.add(stop.event_id)
+        audio_events = [start, stop]
+        windows.append(
+            AudioWindow(
+                index=len(windows),
+                start_ms=start_ms,
+                end_ms=int(stop.timestamp_ms or 0),
+                start_event_id=start.event_id,
+                end_event_id=stop.event_id,
+                source=normalize_source(start.source),
+                audio_file=start_audio or str((stop.payload or {}).get("audio_file", "") or ""),
+                audio_duration_ms=_payload_int(audio_events, "audio_duration_ms", "duration_ms"),
+                playback_process_duration_ms=_payload_int(audio_events, "playback_process_duration_ms"),
+            )
+        )
+    return windows
+
+
 def _first_wake_cluster_after_audio(
     clusters: List[WakeCluster],
     audio_ms: int,
@@ -267,6 +367,138 @@ def _first_wake_cluster_after_audio(
         if cluster.start_ms - audio_ms <= within_ms:
             return cluster
     return None
+
+
+def _assert_first_wake_timing(
+    timeline: Timeline,
+    clusters: List[WakeCluster],
+    *,
+    within_ms: int,
+    pre_roll_ms: int = 800,
+) -> AssertionResult:
+    name = f"WakeDetected_within_{within_ms}ms"
+    timed_clusters = [cluster for cluster in clusters if cluster.start_ms is not None]
+    if not timed_clusters:
+        if clusters:
+            return _skip(name, "唤醒簇缺少可计算时间戳，不能判断注入后耗时。")
+        return _fail(name, "未观察到唤醒簇，无法判断时间窗口。")
+
+    audio_events = [event for event in timeline.find("AudioInjected") if event.timestamp_ms is not None]
+    if not audio_events:
+        return _skip(name, "未观察到 AudioInjected，离线日志只能判断唤醒存在，不能判断注入后耗时。")
+
+    candidates: List[Dict[str, Any]] = []
+    for audio in audio_events:
+        audio_ms = int(audio.timestamp_ms or 0)
+        for cluster in timed_clusters:
+            cluster_ms = int(cluster.start_ms or 0)
+            delta = cluster_ms - audio_ms
+            if delta < -pre_roll_ms:
+                continue
+            candidates.append(
+                {
+                    "delta_ms": max(0, delta),
+                    "raw_delta_ms": delta,
+                    "cluster": cluster,
+                    "audio_event": audio,
+                    "audio_event_id": audio.event_id,
+                    "audio_source": normalize_source(audio.source),
+                }
+            )
+
+    if not candidates:
+        first = timed_clusters[0]
+        return _fail(
+            name,
+            "AudioInjected 之后未观察到带时间戳的唤醒簇。",
+            first_cluster=first.to_dict(),
+            audio_count=len(audio_events),
+        )
+
+    candidates.sort(key=lambda item: (int(item["delta_ms"]), int(item["cluster"].start_ms or 0)))
+    safe = [item for item in candidates if int(item["delta_ms"]) <= within_ms]
+    if safe:
+        item = safe[0]
+        return _pass(
+            name,
+            f"首个可信唤醒簇在 {item['delta_ms']}ms 内发生。",
+            delta_ms=item["delta_ms"],
+            raw_delta_ms=item["raw_delta_ms"],
+            event_id=item["cluster"].events[0].event_id,
+            cluster=item["cluster"].to_dict(),
+            audio_event_id=item["audio_event_id"],
+            audio_source=item["audio_source"],
+        )
+
+    audio_windows = build_audio_windows(timeline)
+    estimated_candidates: List[Dict[str, Any]] = []
+    for window in audio_windows:
+        if window.audio_duration_ms is None or window.audio_duration_ms <= 0:
+            continue
+        effective_start_ms = window.end_ms - int(window.audio_duration_ms)
+        for cluster in timed_clusters:
+            cluster_ms = int(cluster.start_ms or 0)
+            delta = cluster_ms - effective_start_ms
+            if delta < -pre_roll_ms:
+                continue
+            estimated_candidates.append(
+                {
+                    "delta_ms": max(0, delta),
+                    "raw_delta_ms": delta,
+                    "effective_start_ms": effective_start_ms,
+                    "cluster": cluster,
+                    "window": window,
+                }
+            )
+    estimated_candidates.sort(key=lambda item: (int(item["delta_ms"]), int(item["cluster"].start_ms or 0)))
+    estimated_safe = [item for item in estimated_candidates if int(item["delta_ms"]) <= within_ms]
+    if estimated_safe:
+        item = estimated_safe[0]
+        return _pass(
+            name,
+            f"按 AudioCompleted - 音频时长估算有效波形起点后，首个可信唤醒簇在 {item['delta_ms']}ms 内发生。",
+            delta_ms=item["delta_ms"],
+            raw_delta_ms=item["raw_delta_ms"],
+            threshold_ms=within_ms,
+            anchor_type="estimated_audio_waveform_start",
+            effective_start_ms=item["effective_start_ms"],
+            cluster=item["cluster"].to_dict(),
+            audio_window=item["window"].to_dict(),
+        )
+
+    # Some host players report AudioInjected when the process starts, while the
+    # actual waveform can be delayed until the process is close to finishing.
+    # A wake inside such an over-long playback window is a harness timing
+    # ambiguity, not proof that firmware exceeded the wake latency requirement.
+    ambiguous_windows: List[Dict[str, Any]] = []
+    for window in audio_windows:
+        if not window.suspicious_timing:
+            continue
+        for cluster in timed_clusters:
+            cluster_ms = int(cluster.start_ms or 0)
+            if window.start_ms - pre_roll_ms <= cluster_ms <= window.end_ms + pre_roll_ms:
+                ambiguous_windows.append({"window": window.to_dict(), "cluster": cluster.to_dict(), "delta_from_window_start_ms": cluster_ms - window.start_ms})
+
+    if ambiguous_windows:
+        best = candidates[0]
+        return _ambiguous(
+            name,
+            "唤醒发生在异常过长的主机播放窗口内，AudioInjected 不能作为精确音频到达锚点；本轮只能判定为时序不确定，不能直接归因为固件超时。",
+            best_delta_ms=best["delta_ms"],
+            threshold_ms=within_ms,
+            audio_windows=ambiguous_windows[:3],
+        )
+
+    best = candidates[0]
+    return _fail(
+        name,
+        f"首个可信唤醒簇发生耗时 {best['delta_ms']}ms，超过阈值 {within_ms}ms。",
+        delta_ms=best["delta_ms"],
+        threshold_ms=within_ms,
+        cluster=best["cluster"].to_dict(),
+        audio_event_id=best["audio_event_id"],
+        audio_source=best["audio_source"],
+    )
 
 
 def _assert_cluster_sources(cluster: WakeCluster, *, cp_log: bool = True, asr_log: bool = True, prefix: str = "wake_cluster") -> AssertionResult:
@@ -304,17 +536,22 @@ def assert_event_within_ms(
         return _fail(name, f"未观察到 {event_type}，无法判断时间窗口。")
     if not anchors:
         return _skip(name, f"未观察到 {anchor_event_type}，离线日志只能判断事件存在，不能判断注入后耗时。")
-    anchor = anchors[0]
-    if anchor.timestamp_ms is None:
+    timed_anchors = [event for event in anchors if event.timestamp_ms is not None]
+    if not timed_anchors:
         return _skip(name, f"{anchor_event_type} 缺少可计算时间戳。")
-    measurable = [event for event in targets if event.timestamp_ms is not None and event.timestamp_ms >= anchor.timestamp_ms]
-    if not measurable:
+    candidates = []
+    for anchor in timed_anchors:
+        for target in targets:
+            if target.timestamp_ms is None or target.timestamp_ms < anchor.timestamp_ms:
+                continue
+            candidates.append((int(target.timestamp_ms - anchor.timestamp_ms), anchor, target))
+    if not candidates:
         return _fail(name, f"{anchor_event_type} 后未观察到带时间戳的 {event_type}。")
-    first = measurable[0]
-    delta = int(first.timestamp_ms - anchor.timestamp_ms)
+    candidates.sort(key=lambda item: item[0])
+    delta, anchor, first = candidates[0]
     if delta <= within_ms:
-        return _pass(name, f"{event_type} 在 {delta}ms 内发生。", delta_ms=delta, event_id=first.event_id)
-    return _fail(name, f"{event_type} 发生耗时 {delta}ms，超过阈值 {within_ms}ms。", delta_ms=delta, threshold_ms=within_ms)
+        return _pass(name, f"{event_type} 在 {delta}ms 内发生。", delta_ms=delta, event_id=first.event_id, anchor_event_id=anchor.event_id)
+    return _fail(name, f"{event_type} 发生耗时 {delta}ms，超过阈值 {within_ms}ms。", delta_ms=delta, threshold_ms=within_ms, event_id=first.event_id, anchor_event_id=anchor.event_id)
 
 
 def assert_event_order(timeline: Timeline, before_type: str, after_type: str) -> AssertionResult:
@@ -402,6 +639,7 @@ def aggregate_result(assertions: List[AssertionResult]) -> str:
 
 def evaluate_first_wake(timeline: Timeline, *, cp_log: bool = True, asr_log: bool = True, wake_within_ms: int = 3000) -> Dict[str, Any]:
     wake_by_source = timeline.counts_by_source("WakeDetected")
+    wake_clusters = cluster_wake_events(timeline)
     assertions: List[AssertionResult] = [
         assert_event_exists(timeline, "WakeDetected"),
         assert_event_exists(timeline, "WakeDetected", source="ap"),
@@ -410,9 +648,15 @@ def evaluate_first_wake(timeline: Timeline, *, cp_log: bool = True, asr_log: boo
         assertions.append(assert_event_exists(timeline, "WakeDetected", source="cp"))
     if asr_log:
         assertions.append(assert_event_exists(timeline, "WakeDetected", source="asr"))
+    if wake_clusters:
+        first_cluster = wake_clusters[0]
+        assertions.append(_pass("first_wake_cluster_exists", f"观察到 {len(wake_clusters)} 个物理唤醒簇。", cluster_count=len(wake_clusters), first_cluster=first_cluster.to_dict()))
+        assertions.append(_assert_cluster_sources(first_cluster, cp_log=cp_log, asr_log=asr_log, prefix="first_wake_cluster"))
+    else:
+        assertions.append(_fail("first_wake_cluster_exists", "未观察到任何物理唤醒簇。"))
     assertions.extend(
         [
-            assert_event_within_ms(timeline, "WakeDetected", within_ms=wake_within_ms),
+            _assert_first_wake_timing(timeline, wake_clusters, within_ms=wake_within_ms),
             assert_no_event_during(timeline, "RebootDetected", duration_ms=10000, anchor_event_type="WakeDetected"),
             assert_no_event_during(timeline, "CrashDetected", duration_ms=10000, anchor_event_type="WakeDetected"),
         ]
@@ -422,6 +666,8 @@ def evaluate_first_wake(timeline: Timeline, *, cp_log: bool = True, asr_log: boo
         "profile": "first_wake",
         "result": result,
         "wake_by_source": wake_by_source,
+        "wake_clusters": [cluster.to_dict() for cluster in wake_clusters],
+        "audio_windows": [window.to_dict() for window in build_audio_windows(timeline)],
         "assertions": [item.to_dict() for item in assertions],
     }
 

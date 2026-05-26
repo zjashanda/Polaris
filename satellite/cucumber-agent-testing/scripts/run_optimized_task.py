@@ -30,15 +30,16 @@ if str(BDD_ROOT) not in sys.path:
     sys.path.insert(0, str(BDD_ROOT))
 
 from runtime.constraint_engine import evaluate_constraints  # noqa: E402
-from runtime.resource_runtime import build_resource_snapshot  # noqa: E402
+from runtime.resource_runtime import ResourceLockManager, build_resource_snapshot  # noqa: E402
 
 
 PASS_RESULTS = {"PASS", "PASS_WITH_SKIPPED_TIMING", "DRY_RUN_OK", "PLAN_OK"}
 BLOCKED_RESULTS = {"BLOCKED", "PRECHECK_BLOCKED"}
+TIMING_RESULTS = {"TIMING_AMBIGUOUS"}
 
 
 def stamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
 def now_iso() -> str:
@@ -234,8 +235,25 @@ def extract_bdd_result(run_dir: str) -> Dict[str, Any]:
     summary = load_json(root / "bdd_run_summary.json")
     run_summary = load_json(root / "run_summary.json")
     runtime_summary = load_json(root / "runtime_replay_summary.json")
-    result = first_non_empty(summary.get("result"), summary.get("status"), run_summary.get("status"))
     scenario_results = summary.get("scenario_results", [])
+    scenario_statuses = [
+        str(item.get("result", "") or "").upper()
+        for item in scenario_results
+        if isinstance(item, dict) and str(item.get("result", "") or "").strip()
+    ]
+    if scenario_statuses:
+        if any(item in {"FAIL", "ERROR"} for item in scenario_statuses):
+            result = "FAIL"
+        elif any(item in BLOCKED_RESULTS for item in scenario_statuses):
+            result = "BLOCKED"
+        elif any(item in TIMING_RESULTS for item in scenario_statuses):
+            result = "TIMING_AMBIGUOUS"
+        elif all(item in PASS_RESULTS for item in scenario_statuses):
+            result = "PASS"
+        else:
+            result = scenario_statuses[0]
+    else:
+        result = first_non_empty(summary.get("result"), run_summary.get("result"), summary.get("status"), run_summary.get("status"))
     runtime_results: List[str] = []
     if isinstance(runtime_summary, dict):
         for item in runtime_summary.values():
@@ -263,6 +281,8 @@ def classify_attempt(mode: str, returncode: int, bdd: Dict[str, Any]) -> str:
         return result.upper()
     if result.upper() in BLOCKED_RESULTS:
         return "BLOCKED"
+    if result.upper() in TIMING_RESULTS:
+        return "TIMING_AMBIGUOUS"
     if runtime_results:
         if all(item in PASS_RESULTS for item in runtime_results):
             return "PASS"
@@ -270,6 +290,8 @@ def classify_attempt(mode: str, returncode: int, bdd: Dict[str, Any]) -> str:
             return "BLOCKED"
         if any(item == "FAIL" for item in runtime_results):
             return "FAIL"
+        if any(item in TIMING_RESULTS for item in runtime_results):
+            return "TIMING_AMBIGUOUS"
     return "PASS"
 
 
@@ -281,6 +303,8 @@ def aggregate_attempts(attempts: List[Dict[str, Any]], max_attempts: int) -> Dic
         return {"result": "PASS", "stability": stability, "passed_attempt": first_pass, "attempts": len(attempts)}
     if any(item in BLOCKED_RESULTS for item in results):
         return {"result": "BLOCKED", "stability": "ENV_RELATED", "attempts": len(attempts)}
+    if any(item in TIMING_RESULTS for item in results):
+        return {"result": "TIMING_AMBIGUOUS", "stability": "TIMING_AMBIGUOUS", "attempts": len(attempts)}
     if len(set(results)) <= 1 and len(attempts) >= max_attempts:
         return {"result": "FAIL", "stability": "STABLE_FAIL", "attempts": len(attempts)}
     return {"result": "FAIL", "stability": "FLAKY_FAIL", "attempts": len(attempts)}
@@ -311,6 +335,8 @@ def main() -> int:
     parser.add_argument("--out-root", default="")
     parser.add_argument("--precheck-only", action="store_true")
     parser.add_argument("--allow-precheck-blocked", action="store_true")
+    parser.add_argument("--no-resource-lock", action="store_true", help="跳过本地资源锁；仅建议调试时使用。")
+    parser.add_argument("--lock-root", default="", help="资源锁目录，默认 debug/resource_locks")
     parser.add_argument("--print-command", action="store_true")
     args, passthrough = parser.parse_known_args()
 
@@ -363,43 +389,68 @@ def main() -> int:
         return 1
 
     attempts: List[Dict[str, Any]] = []
-    for attempt_index in range(1, max_attempts + 1):
-        attempt_dir = run_root / f"attempt_{attempt_index:02d}"
-        attempt_dir.mkdir(parents=True, exist_ok=True)
-        started = now_iso()
-        completed = subprocess.run(
-            cmd,
-            cwd=str(WORKSPACE_ROOT),
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        finished = now_iso()
-        output = completed.stdout or ""
-        (attempt_dir / "stdout.log").write_text(output, encoding="utf-8")
-        run_dir = parse_run_dir(output)
-        bdd = extract_bdd_result(run_dir)
-        result = classify_attempt(mode, completed.returncode, bdd)
+    locks = []
+    lock_root = resolve_workspace_path(args.lock_root).resolve() if args.lock_root else default_out_root(env_payload).parent / "resource_locks"
+    lock_manager = ResourceLockManager(lock_root)
+    try:
+        if mode == "execute" and not args.no_resource_lock:
+            locks = lock_manager.acquire(build_resource_snapshot(env_payload, task).claims, run_id=run_root.name, owner=task_id)
+            write_json(run_root / "resource_locks.json", {"lock_root": str(lock_root), "locks": [item.to_dict() for item in locks]})
+
+        for attempt_index in range(1, max_attempts + 1):
+            attempt_dir = run_root / f"attempt_{attempt_index:02d}"
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            started = now_iso()
+            completed = subprocess.run(
+                cmd,
+                cwd=str(WORKSPACE_ROOT),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            finished = now_iso()
+            output = completed.stdout or ""
+            (attempt_dir / "stdout.log").write_text(output, encoding="utf-8")
+            run_dir = parse_run_dir(output)
+            bdd = extract_bdd_result(run_dir)
+            result = classify_attempt(mode, completed.returncode, bdd)
+            attempt = {
+                "attempt": attempt_index,
+                "started_at": started,
+                "finished_at": finished,
+                "returncode": completed.returncode,
+                "result": result,
+                "run_dir": rel(Path(run_dir)) if run_dir else "",
+                "stdout_log": rel(attempt_dir / "stdout.log"),
+                "bdd": bdd,
+            }
+            attempts.append(attempt)
+            write_json(attempt_dir / "attempt.json", attempt)
+            append_jsonl(run_root / "attempts.jsonl", attempt)
+            print(f"attempt={attempt_index} result={result} returncode={completed.returncode} run_dir={attempt['run_dir']}")
+            if result in PASS_RESULTS:
+                break
+            if result in BLOCKED_RESULTS and not args.retry_blocked:
+                break
+    except RuntimeError as exc:
         attempt = {
-            "attempt": attempt_index,
-            "started_at": started,
-            "finished_at": finished,
-            "returncode": completed.returncode,
-            "result": result,
-            "run_dir": rel(Path(run_dir)) if run_dir else "",
-            "stdout_log": rel(attempt_dir / "stdout.log"),
-            "bdd": bdd,
+            "attempt": len(attempts) + 1,
+            "started_at": now_iso(),
+            "finished_at": now_iso(),
+            "returncode": 2,
+            "result": "BLOCKED",
+            "run_dir": "",
+            "stdout_log": "",
+            "reason": str(exc),
         }
         attempts.append(attempt)
-        write_json(attempt_dir / "attempt.json", attempt)
         append_jsonl(run_root / "attempts.jsonl", attempt)
-        print(f"attempt={attempt_index} result={result} returncode={completed.returncode} run_dir={attempt['run_dir']}")
-        if result in PASS_RESULTS:
-            break
-        if result in BLOCKED_RESULTS and not args.retry_blocked:
-            break
+        write_json(run_root / "resource_lock_error.json", {"error": str(exc), "lock_root": str(lock_root)})
+    finally:
+        if locks:
+            lock_manager.release(locks)
 
     after_payload = load_env_payload(env_path)
     after = snapshot_state(env_path, after_payload, task, "after")
