@@ -14,18 +14,29 @@ def _as_list(value: Any) -> List[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
-def _merge_policy(policy: Dict[str, Any], profile: str) -> Dict[str, Any]:
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _merge_policy(policy: Dict[str, Any], profile: str, project_id: str = "") -> Dict[str, Any]:
     coverage = policy.get("coverage", {}) if isinstance(policy.get("coverage"), dict) else {}
     effective = deepcopy(coverage.get("common", {}) if isinstance(coverage.get("common"), dict) else {})
     profiles = coverage.get("profiles", {}) if isinstance(coverage.get("profiles"), dict) else {}
     specific = profiles.get(profile, {}) if isinstance(profiles.get(profile), dict) else {}
-    for key, value in specific.items():
-        if isinstance(value, dict) and isinstance(effective.get(key), dict):
-            merged = dict(effective[key])
-            merged.update(value)
-            effective[key] = merged
-        else:
-            effective[key] = value
+    effective = _deep_merge(effective, specific)
+    projects = coverage.get("projects", {}) if isinstance(coverage.get("projects"), dict) else {}
+    project_policy = projects.get(project_id, {}) if project_id and isinstance(projects.get(project_id), dict) else {}
+    project_common = project_policy.get("common", {}) if isinstance(project_policy.get("common"), dict) else {}
+    effective = _deep_merge(effective, project_common)
+    project_profiles = project_policy.get("profiles", {}) if isinstance(project_policy.get("profiles"), dict) else {}
+    project_specific = project_profiles.get(profile, {}) if isinstance(project_profiles.get(profile), dict) else {}
+    effective = _deep_merge(effective, project_specific)
     return effective
 
 
@@ -68,7 +79,7 @@ def _coverage_from_runtime_state(runtime_state: Dict[str, Any]) -> Dict[str, Any
     }
 
 
-def evaluate_state_coverage_policy(runtime_state: Dict[str, Any], profile: str, policy: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_state_coverage_policy(runtime_state: Dict[str, Any], profile: str, policy: Dict[str, Any], project_id: str = "") -> Dict[str, Any]:
     """Return PASS/WARN/FAIL for coverage thresholds without replacing business assertions."""
 
     coverage = _coverage_from_runtime_state(runtime_state)
@@ -76,7 +87,7 @@ def evaluate_state_coverage_policy(runtime_state: Dict[str, Any], profile: str, 
     visited_states = set(_as_list(coverage.get("visited_states")))
     visited_parallel = coverage.get("visited_parallel_states", {}) if isinstance(coverage.get("visited_parallel_states"), dict) else {}
     severity_counts = coverage.get("violation_severity_counts", {}) if isinstance(coverage.get("violation_severity_counts"), dict) else {}
-    effective = _merge_policy(policy, profile)
+    effective = _merge_policy(policy, profile, project_id=project_id)
     checks: List[Dict[str, Any]] = []
 
     min_transition_count = effective.get("min_transition_count")
@@ -210,6 +221,7 @@ def evaluate_state_coverage_policy(runtime_state: Dict[str, Any], profile: str, 
     return {
         "schema": "polaris.state_coverage_policy_result.v1",
         "profile": profile,
+        "project_id": project_id,
         "result": aggregate,
         "state_health": runtime_state.get("state_health", "UNKNOWN"),
         "policy": effective,

@@ -39,13 +39,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run Polaris state coverage policy.")
     parser.add_argument("--runtime-state", required=True)
     parser.add_argument("--profile", required=True)
+    parser.add_argument("--project-id", default="", help="optional project-specific coverage policy override key")
     parser.add_argument("--policy", default=str(DEFAULT_POLICY))
     parser.add_argument("--out", default="")
     args = parser.parse_args()
 
     runtime_state = load_json(resolve_path(args.runtime_state))
     policy = load_json(resolve_path(args.policy))
-    result = evaluate_state_coverage_policy(runtime_state, args.profile, policy)
+    result = evaluate_state_coverage_policy(runtime_state, args.profile, policy, project_id=args.project_id)
     out = resolve_path(args.out) if args.out else BDD_ROOT / "debug" / "state_coverage_policy" / f"{args.profile}.json"
     write_json(out, result)
     print(out)

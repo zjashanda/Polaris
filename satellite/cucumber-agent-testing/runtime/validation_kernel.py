@@ -196,7 +196,7 @@ class ValidationKernel:
                 observe_ms=observe_ms,
             )
             result = str(runner_summary.get("result", "UNKNOWN") or "UNKNOWN")
-            sidecar_result = self._build_runner_sidecars(runner_summary)
+            sidecar_result = self._build_runner_sidecars(runner_summary, project_id=ir.project_id)
             if sidecar_result == "FAIL" and result == "PASS":
                 result = "FAIL"
         elif execute_runner:
@@ -317,7 +317,7 @@ class ValidationKernel:
             "run_root": run_root,
         }
 
-    def _build_runner_sidecars(self, runner_summary: Dict[str, Any]) -> str:
+    def _build_runner_sidecars(self, runner_summary: Dict[str, Any], project_id: str = "") -> str:
         run_root = Path(str(runner_summary.get("run_root", "") or ""))
         if not run_root.exists():
             return "SKIPPED"
@@ -357,9 +357,11 @@ class ValidationKernel:
             }
             write_json(analysis_dir / "state_assertions.json", state_assertions)
             policy_payload = self._default_state_policy_payload()
-            coverage_policy = evaluate_state_coverage_policy(state, profile, policy_payload) if state else {
+            package_project = str(metadata.get("project", "") or project_id or "")
+            coverage_policy = evaluate_state_coverage_policy(state, profile, policy_payload, project_id=package_project) if state else {
                 "schema": "polaris.state_coverage_policy_result.v1",
                 "profile": profile,
+                "project_id": package_project,
                 "result": "SKIPPED",
                 "checks": [],
                 "reason": "runtime_state missing",
@@ -377,6 +379,7 @@ class ValidationKernel:
             item = {
                 "scenario_id": scenario_id,
                 "profile": profile,
+                "project_id": package_project,
                 "package": str(package_path),
                 "event_count": package.get("timeline", {}).get("event_count", len(timeline.events)) if isinstance(package.get("timeline"), dict) else len(timeline.events),
                 "assertion_result": assertion_summary.get("result", "UNKNOWN"),

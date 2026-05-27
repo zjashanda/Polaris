@@ -266,6 +266,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `run_state_coverage_policy.py` 会把 `runtime_state.coverage` 按 profile 阈值转成 PASS/WARN/FAIL，例如首唤醒要求 WakeDetected 且禁止 Crash/Reboot，基础命令要求 ASRDetected 或 CommandDetected，联网恢复要求 NetworkLost 和 NetworkRecovered。Validation Kernel 后处理会把该结果写入 `state_coverage_policy.json` 并汇总到 `runtime_analysis.json`。
 
+项目差异不要写死到代码里；在 `state_assertion_policy.json` 的 `coverage.projects.<project_id>` 下添加 `common` 或 `profiles.<profile>` 覆盖即可。例如 WS63 不要求 CP 闭环、某项目半双工窗口更短，都应先落到项目覆盖策略。
+
 `run_assertion_dsl.py` 已支持基础时序和业务链路 DSL：`EXPECT`、`FORBID`、`EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`。在线问答、音乐、新闻、相声等场景可先用它验证“识别后是否出现 TTS/Media 响应、响应是否在指定窗口内、播放持续是否达到阈值”，后续再把稳定规则沉淀进 profile 断言。
 
 `build_capability_matrix.py` 已把常见缺口拆细：音频回采 oracle、媒体日志响应 oracle、真实声学响应 oracle、云控权限、boot reason oracle。新项目只配串口和 Wi-Fi 后，先跑能力矩阵，就能看到哪些测试可直接执行、哪些需要补资料或补硬件。

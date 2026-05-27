@@ -335,7 +335,7 @@ post_analysis/*/state_assertions.json
 post_analysis/*/replay_vm_state.json
 ```
 
-`runtime_analysis.json` 会同时汇总 profile 断言、默认状态断言、状态覆盖策略和 `state_health`。如果出现 Crash 后继续业务、Reboot 后无恢复标记就继续识别、音频/媒体证据顺序不完整等状态机 guard 违规，或 profile 要求的 Wake/ASR/Media/Network 状态覆盖缺失，会在这里单独呈现，便于区分稳定性问题、日志缺口和业务断言失败。
+`runtime_analysis.json` 会同时汇总 profile 断言、默认状态断言、状态覆盖策略和 `state_health`。如果出现 Crash 后继续业务、Reboot 后无恢复标记就继续识别、音频/媒体证据顺序不完整等状态机 guard 违规，或 profile 要求的 Wake/ASR/Media/Network 状态覆盖缺失，会在这里单独呈现，便于区分稳定性问题、日志缺口和业务断言失败。状态覆盖策略支持 `coverage.projects.<project_id>` 覆盖项，可按 WB01、WS63 或新项目单独收紧/放宽阈值。
 
 ## 6. Task JSON 怎么写
 

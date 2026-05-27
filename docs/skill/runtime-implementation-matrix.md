@@ -37,6 +37,7 @@
 | Event Graph Rule Overlay MVP | 项目私有云端/媒体/TTS marker 可通过 JSON overlay 增补因果边，不改核心图逻辑 | `references/optimization/event_graph_rules.json`, `runtime/event_graph.py` |
 | State Assertion DSL-lite | 在 `runtime_state.json` 上执行状态断言、历史事件必选/任选、禁止事件 | `runtime/state_assertion_dsl.py`, `scripts/run_state_assertion_dsl.py` |
 | State Coverage Policy MVP | 按 profile 检查 `runtime_state.coverage`，输出覆盖阈值 PASS/WARN/FAIL，并接入 Kernel runtime analysis | `runtime/state_coverage_policy.py`, `scripts/run_state_coverage_policy.py` |
+| Project Coverage Override MVP | 支持 `coverage.projects.<project_id>` 覆盖 profile/common 阈值，避免项目差异硬编码 | `references/optimization/state_assertion_policy.json` |
 | Validation IR MVP | task/scene/compiled feature plan + env 编译为 `polaris.validation_ir.v1` 或 `polaris.validation_ir_bundle.v1`，统一包含 resource/constraint/adapter/capability 与 intent/actions/expect | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
 | Analytics Trend MVP | 扫描 `execution_record.json`，按 day/project/task 聚合 result/stability 趋势 | `runtime/analytics_trend.py`, `scripts/build_analytics_trend.py` |
 | Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `runtime/device_adapter.py`, `scripts/run_adapter_action.py` |
@@ -204,3 +205,12 @@
 | CLI overlay | `build_event_graph.py --rules <file>` 支持加载项目规则 |
 | Overlay smoke | WS63 first_wake timeline + smoke rule 输出 `rule_edge_count=7`、`smoke_asr_to_response_overlay=7`、warnings=0 |
 | Kernel 集成 | Validation Kernel 后处理默认加载 `event_graph_rules.json`，项目启用规则后会进入 `runtime_analysis` 侧证据 |
+
+## 2026-05-27 Project Coverage Override 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Policy merge | `coverage.projects.<project_id>.profiles.<profile>` 可覆盖通用 profile 阈值 |
+| CLI project-id | `run_state_coverage_policy.py --project-id cskwb01` 输出结果带 project_id |
+| Override smoke | 自定义 cskwb01 first_wake `min_transition_count=999` 输出 WARN；venusws63 未命中 override 保持 PASS |
+| Kernel 集成 | Validation Kernel 后处理会把 package metadata project 或当前 IR project_id 传入 coverage policy |

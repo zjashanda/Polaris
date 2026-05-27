@@ -92,6 +92,7 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - Kernel 生命周期入口走 `run_validation_kernel.py`；它会在 runner 后自动补齐 runtime replay 侧的 event graph、默认 state assertions 和 Replay VM-lite snapshot。
 - 状态稳定性不要只看最终 PASS/FAIL；必须结合 `runtime_state.json` 里的 `state_health`、`state_violations`、`coverage` 区分崩溃/重启、日志缺口、媒体顺序缺失和业务断言失败。
 - `run_state_coverage_policy.py` 和 Kernel 后处理会按 profile 检查 coverage 阈值；缺少首唤醒 WakeDetected、基础命令 ASR/Command、联网恢复 NetworkLost/NetworkRecovered 等关键覆盖时，应先归因日志/前置/需求，再决定是否判固件问题。
+- 项目差异优先写到 `state_assertion_policy.json` 的 `coverage.projects.<project_id>`，不要在代码里硬编码 WB01/WS63 或新项目阈值。
 - Event Graph 需要优先查看 `risk_summary` 和因果边：`command/asr_to_*_response`、`media_started_to_completed`、`media_interrupted`、`interrupt_to_recognition`、`possible_reboot/crash_after_activity`，用于分析在线媒体、打断和重启根因。
 - 项目私有云端/媒体/TTS/MP3 marker 先沉淀到 `references/optimization/event_graph_rules.json` 或通过 `build_event_graph.py --rules` 加载，不要优先写死到核心 `runtime/event_graph.py`。
 - adapter 单动作规划/执行入口走 `run_adapter_action.py`，默认只 dry-run 渲染命令；常见多步前置走 `plan_adapter_flow.py`，例如 `pa_recover`、`switch_device_env`、`wake_audio_file`、`set_volume`、`set_half_duplex`、`set_full_duplex`。真执行副作用必须显式 `--execute --allow-side-effects`。

@@ -280,6 +280,18 @@
         ],
         "min_transition_count": 0
       }
+    },
+    "projects": {
+      "cskwb01": {
+        "description": "WB01 project-specific coverage overrides. Keep empty until project evidence requires stricter thresholds.",
+        "common": {},
+        "profiles": {}
+      },
+      "venusws63": {
+        "description": "WS63/AP+WiFi project-specific coverage overrides. CP is not required for this project.",
+        "common": {},
+        "profiles": {}
+      }
     }
   }
 }
