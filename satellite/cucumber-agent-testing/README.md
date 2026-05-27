@@ -160,10 +160,17 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
   "execution": {
     "observe_ms": 15000,
     "manage_session": true,
-    "allow_side_effects": false
+    "allow_side_effects": false,
+    "adapter_flows": {
+      "pre": [
+        {"flow": "pa_recover", "when": "dry-run", "required": false}
+      ]
+    }
   }
 }
 ```
+
+`execution.adapter_flows.pre/post` 会由 `run_optimized_task.py` 在主流程前/后调用 `plan_adapter_flow.py`。默认 dry-run 只渲染命令；`mode=execute` 且显式 `--allow-side-effects` 时才会真实执行。`required=true` 的 pre flow 失败会阻断主流程，避免前置环境没准备好时误判固件失败。
 
 如果是命令词识别，再加输入：
 

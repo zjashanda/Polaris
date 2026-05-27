@@ -245,6 +245,7 @@ EXPECT_DURATION MediaStarted TO MediaCompleted >= 500ms
 `run_optimized_task.py` 是当前按两份 Runtime 优化方案新增的第一层工程化入口。它不会替换 `run_task.py`，而是在外层增加：
 
 - 资源/约束 preflight：串口、声卡、网络、云环境、副作用策略、项目拓扑。
+- Adapter Flow 前置/收尾：可在主 Cucumber runner 前后执行 PA、环境切换、联网、音量等固定 flow。
 - 执行前后状态快照：`state/before.json`、`state/after.json`。
 - 状态差异：`state_diff.json`。
 - 尝试记录：`attempts.jsonl` 和每次 attempt 的 `stdout.log`。
@@ -280,6 +281,8 @@ satellite/cucumber-agent-testing/debug/optimized_runs/<时间戳>_<task_id>/
 preflight.json
 command.json
 execution_record.json
+adapter_flows/pre.json
+adapter_flows/post.json
 attempts.jsonl
 state/before.json
 state/after.json
@@ -361,7 +364,15 @@ post_analysis/*/replay_vm_state.json
   "execution": {
     "observe_ms": 15000,
     "manage_session": true,
-    "allow_side_effects": false
+    "allow_side_effects": false,
+    "adapter_flows": {
+      "pre": [
+        {"flow": "pa_recover", "when": "dry-run", "required": false}
+      ],
+      "post": [
+        {"flow": "hotspot_status", "when": "dry-run", "required": false}
+      ]
+    }
   }
 }
 ```
@@ -377,6 +388,9 @@ post_analysis/*/replay_vm_state.json
 | `inputs.command_file` | 命令词文件，默认 `docs/fa2命令词.txt`。 |
 | `execution.allow_side_effects` | 真机执行必须为 `true` 或命令行传 `--allow-side-effects`。 |
 | `execution.manage_session` | 是否自动建立/关闭串口日志会话。 |
+| `execution.adapter_flows.pre/post` | 在 `run_optimized_task.py` 主流程前/后执行固定 Adapter Flow；默认 dry-run，execute 模式且允许副作用时才会真实执行。 |
+
+`adapter_flows` 适合放稳定前置动作，例如 PA 恢复、AP 环境切换、联网确认、音量/半全双工云控。每个 flow 支持 `when`、`required`、`execute` 和 `params`；`required=true` 的 pre flow 失败会阻断主流程，避免前置没完成还误判固件 FAIL。
 
 ## 7. 当前已注册测试项
 

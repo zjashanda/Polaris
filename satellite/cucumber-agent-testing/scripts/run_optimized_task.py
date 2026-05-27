@@ -26,6 +26,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 BDD_ROOT = SCRIPT_DIR.parents[0]
 WORKSPACE_ROOT = SCRIPT_DIR.parents[2]
 RUN_TASK = SCRIPT_DIR / "run_task.py"
+PLAN_ADAPTER_FLOW = SCRIPT_DIR / "plan_adapter_flow.py"
 if str(BDD_ROOT) not in sys.path:
     sys.path.insert(0, str(BDD_ROOT))
 
@@ -203,6 +204,163 @@ def build_run_task_command(args: argparse.Namespace, task_path: Path, env_path: 
     return cmd
 
 
+def render_placeholders(value: Any, context: Dict[str, str]) -> str:
+    text = str(value)
+    for key, item in context.items():
+        text = text.replace("{" + key + "}", str(item))
+    return text
+
+
+def adapter_flow_context(args: argparse.Namespace, task: Dict[str, Any], env_payload: Dict[str, Any], mode: str) -> Dict[str, str]:
+    inputs = task.get("inputs", {}) if isinstance(task.get("inputs"), dict) else {}
+    return {
+        "mode": mode,
+        "wake_word": first_non_empty(args.wake_word, inputs.get("wake_word"), nested(env_payload, "device", "wake_word"), "小美小美"),
+        "command_text": first_non_empty(args.command_text, inputs.get("command_text"), "打开空调"),
+        "command_file": first_non_empty(args.command_file, inputs.get("command_file"), nested(env_payload, "paths", "command_file")),
+        "command_limit": first_non_empty(args.command_limit, inputs.get("command_limit"), nested(env_payload, "limits", "command_limit"), "20"),
+        "observe_ms": first_non_empty(args.observe_ms, nested(task, "execution", "observe_ms"), nested(env_payload, "timeouts", "observe_ms"), "15000"),
+        "device_key": first_non_empty(args.device_key, nested(env_payload, "audio", "default_playback_device_key")),
+        "wifi_ssid": first_non_empty(nested(env_payload, "network", "wifi_ssid"), env_payload.get("current_connected_ssid")),
+        "wifi_password": first_non_empty(nested(env_payload, "network", "wifi_password"), env_payload.get("wifi_password")),
+        "half_duplex_timeout_s": first_non_empty(nested(env_payload, "timeouts", "half_duplex_timeout_s"), "15"),
+        "full_duplex_timeout_s": first_non_empty(nested(env_payload, "timeouts", "full_duplex_timeout_s"), "60"),
+        "volume": first_non_empty(nested(env_payload, "audio", "playback_volume"), "30"),
+    }
+
+
+def normalize_adapter_flows(task: Dict[str, Any], phase: str) -> List[Dict[str, Any]]:
+    execution = task.get("execution", {}) if isinstance(task.get("execution"), dict) else {}
+    result: List[Dict[str, Any]] = []
+    legacy_key = f"{phase}_adapter_flows"
+    raw_legacy = execution.get(legacy_key, [])
+    if isinstance(raw_legacy, list):
+        result.extend(raw_legacy)
+    raw = execution.get("adapter_flows", {})
+    if isinstance(raw, dict):
+        value = raw.get(phase, [])
+        if isinstance(value, list):
+            result.extend(value)
+    elif isinstance(raw, list) and phase == "pre":
+        result.extend(raw)
+    normalized: List[Dict[str, Any]] = []
+    for item in result:
+        if isinstance(item, str):
+            normalized.append({"flow": item})
+        elif isinstance(item, dict):
+            normalized.append(dict(item))
+    return normalized
+
+
+def build_adapter_flow_command(
+    *,
+    flow: Dict[str, Any],
+    phase: str,
+    index: int,
+    env_path: Path,
+    out_dir: Path,
+    mode: str,
+    allow_side_effects: bool,
+    context: Dict[str, str],
+) -> tuple[List[str], Path, str]:
+    flow_name = first_non_empty(flow.get("flow"), flow.get("name"))
+    out_path = out_dir / f"{phase}_{index:02d}_{flow_name or 'adapter_flow'}.json"
+    cmd = [sys.executable, str(PLAN_ADAPTER_FLOW), "--flow", flow_name, "--env-file", str(env_path), "--out", str(out_path)]
+    params = flow.get("params", {}) if isinstance(flow.get("params"), dict) else {}
+    for key, value in params.items():
+        cmd.extend(["--param", f"{key}={render_placeholders(value, context)}"])
+    should_execute = mode == "execute" and allow_side_effects and bool(flow.get("execute", True))
+    if should_execute:
+        cmd.extend(["--execute", "--allow-side-effects"])
+    return cmd, out_path, flow_name
+
+
+def flow_enabled_for_mode(flow: Dict[str, Any], mode: str) -> bool:
+    when = first_non_empty(flow.get("when"), "always").lower()
+    if when in {"always", "all"}:
+        return True
+    if when in {"execute", "dry-run", "plan-only"}:
+        return when == mode
+    if when == "not-plan-only":
+        return mode != "plan-only"
+    return True
+
+
+def run_adapter_flow_phase(
+    *,
+    phase: str,
+    flows: List[Dict[str, Any]],
+    run_root: Path,
+    env_path: Path,
+    task: Dict[str, Any],
+    args: argparse.Namespace,
+    mode: str,
+    allow_side_effects: bool,
+    env_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    phase_dir = run_root / "adapter_flows" / phase
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    context = adapter_flow_context(args, task, env_payload, mode)
+    items: List[Dict[str, Any]] = []
+    for index, flow in enumerate(flows, start=1):
+        flow_name = first_non_empty(flow.get("flow"), flow.get("name"))
+        required = resolve_bool(None, flow.get("required"), phase == "pre")
+        if not flow_name:
+            items.append({"index": index, "result": "BLOCKED", "required": required, "reason": "adapter flow name is empty"})
+            break
+        if not flow_enabled_for_mode(flow, mode):
+            items.append({"index": index, "flow": flow_name, "result": "SKIPPED", "required": required, "reason": f"when={flow.get('when')} mode={mode}"})
+            continue
+        cmd, out_path, _ = build_adapter_flow_command(
+            flow=flow,
+            phase=phase,
+            index=index,
+            env_path=env_path,
+            out_dir=phase_dir,
+            mode=mode,
+            allow_side_effects=allow_side_effects,
+            context=context,
+        )
+        stdout_path = phase_dir / f"{phase}_{index:02d}_{flow_name}.log"
+        completed = subprocess.run(
+            cmd,
+            cwd=str(WORKSPACE_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        stdout_path.write_text(completed.stdout or "", encoding="utf-8")
+        payload = load_json(out_path)
+        result = first_non_empty(payload.get("result"), "FAIL" if completed.returncode else "PASS")
+        item = {
+            "index": index,
+            "flow": flow_name,
+            "phase": phase,
+            "required": required,
+            "returncode": completed.returncode,
+            "result": result,
+            "cmd": cmd,
+            "cmdline": quote_cmd(cmd),
+            "out": rel(out_path),
+            "stdout_log": rel(stdout_path),
+        }
+        items.append(item)
+        if required and result not in {"PASS", "PLAN_OK", "SKIPPED"}:
+            break
+    aggregate = "PASS"
+    if any(item.get("result") in {"FAIL", "BLOCKED"} and item.get("required") for item in items):
+        aggregate = str(next(item.get("result") for item in items if item.get("result") in {"FAIL", "BLOCKED"} and item.get("required")))
+    elif any(item.get("result") == "PLAN_OK" for item in items):
+        aggregate = "PLAN_OK"
+    elif all(item.get("result") == "SKIPPED" for item in items) and items:
+        aggregate = "SKIPPED"
+    summary = {"schema": "polaris.adapter_flow_phase.v1", "phase": phase, "result": aggregate, "items": items}
+    write_json(run_root / "adapter_flows" / f"{phase}.json", summary)
+    return summary
+
+
 def parse_run_dir(output: str) -> str:
     candidates: List[str] = []
     for raw in output.splitlines():
@@ -363,9 +521,39 @@ def main() -> int:
     write_json(run_root / "state" / "before.json", before)
 
     cmd = build_run_task_command(args, task_path, env_path, mode, allow_side_effects, manage_session, runtime_strict, passthrough)
-    write_json(run_root / "command.json", {"cmd": cmd, "cmdline": quote_cmd(cmd), "created_at": now_iso()})
+    pre_adapter_flows = normalize_adapter_flows(task, "pre")
+    post_adapter_flows = normalize_adapter_flows(task, "post")
+    adapter_flow_print_commands = []
+    adapter_context = adapter_flow_context(args, task, env_payload, mode)
+    for phase, flows in (("pre", pre_adapter_flows), ("post", post_adapter_flows)):
+        for index, flow in enumerate(flows, start=1):
+            if not flow_enabled_for_mode(flow, mode):
+                continue
+            flow_cmd, flow_out, flow_name = build_adapter_flow_command(
+                flow=flow,
+                phase=phase,
+                index=index,
+                env_path=env_path,
+                out_dir=run_root / "adapter_flows" / phase,
+                mode=mode,
+                allow_side_effects=allow_side_effects,
+                context=adapter_context,
+            )
+            adapter_flow_print_commands.append({"phase": phase, "flow": flow_name, "cmd": flow_cmd, "cmdline": quote_cmd(flow_cmd), "out": rel(flow_out)})
+    write_json(
+        run_root / "command.json",
+        {
+            "cmd": cmd,
+            "cmdline": quote_cmd(cmd),
+            "adapter_flows": adapter_flow_print_commands,
+            "created_at": now_iso(),
+        },
+    )
     if args.print_command:
         print(run_root)
+        for item in adapter_flow_print_commands:
+            print(f"# adapter_flow phase={item['phase']} flow={item['flow']}")
+            print("$ " + item["cmdline"])
         print("$ " + quote_cmd(cmd))
         return 0
     if args.precheck_only:
@@ -389,6 +577,8 @@ def main() -> int:
         return 1
 
     attempts: List[Dict[str, Any]] = []
+    adapter_flow_records: Dict[str, Any] = {}
+    adapter_flow_blocker: Dict[str, Any] = {}
     locks = []
     lock_root = resolve_workspace_path(args.lock_root).resolve() if args.lock_root else default_out_root(env_payload).parent / "resource_locks"
     lock_manager = ResourceLockManager(lock_root)
@@ -397,43 +587,72 @@ def main() -> int:
             locks = lock_manager.acquire(build_resource_snapshot(env_payload, task).claims, run_id=run_root.name, owner=task_id)
             write_json(run_root / "resource_locks.json", {"lock_root": str(lock_root), "locks": [item.to_dict() for item in locks]})
 
-        for attempt_index in range(1, max_attempts + 1):
-            attempt_dir = run_root / f"attempt_{attempt_index:02d}"
-            attempt_dir.mkdir(parents=True, exist_ok=True)
-            started = now_iso()
-            completed = subprocess.run(
-                cmd,
-                cwd=str(WORKSPACE_ROOT),
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+        if pre_adapter_flows:
+            adapter_flow_records["pre"] = run_adapter_flow_phase(
+                phase="pre",
+                flows=pre_adapter_flows,
+                run_root=run_root,
+                env_path=env_path,
+                task=task,
+                args=args,
+                mode=mode,
+                allow_side_effects=allow_side_effects,
+                env_payload=env_payload,
             )
-            finished = now_iso()
-            output = completed.stdout or ""
-            (attempt_dir / "stdout.log").write_text(output, encoding="utf-8")
-            run_dir = parse_run_dir(output)
-            bdd = extract_bdd_result(run_dir)
-            result = classify_attempt(mode, completed.returncode, bdd)
-            attempt = {
-                "attempt": attempt_index,
-                "started_at": started,
-                "finished_at": finished,
-                "returncode": completed.returncode,
-                "result": result,
-                "run_dir": rel(Path(run_dir)) if run_dir else "",
-                "stdout_log": rel(attempt_dir / "stdout.log"),
-                "bdd": bdd,
-            }
-            attempts.append(attempt)
-            write_json(attempt_dir / "attempt.json", attempt)
-            append_jsonl(run_root / "attempts.jsonl", attempt)
-            print(f"attempt={attempt_index} result={result} returncode={completed.returncode} run_dir={attempt['run_dir']}")
-            if result in PASS_RESULTS:
-                break
-            if result in BLOCKED_RESULTS and not args.retry_blocked:
-                break
+            if adapter_flow_records["pre"].get("result") in {"FAIL", "BLOCKED"}:
+                adapter_flow_blocker = {"phase": "pre", "result": adapter_flow_records["pre"].get("result"), "reason": "required adapter flow failed or was blocked"}
+
+        if not adapter_flow_blocker:
+            for attempt_index in range(1, max_attempts + 1):
+                attempt_dir = run_root / f"attempt_{attempt_index:02d}"
+                attempt_dir.mkdir(parents=True, exist_ok=True)
+                started = now_iso()
+                completed = subprocess.run(
+                    cmd,
+                    cwd=str(WORKSPACE_ROOT),
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                finished = now_iso()
+                output = completed.stdout or ""
+                (attempt_dir / "stdout.log").write_text(output, encoding="utf-8")
+                run_dir = parse_run_dir(output)
+                bdd = extract_bdd_result(run_dir)
+                result = classify_attempt(mode, completed.returncode, bdd)
+                attempt = {
+                    "attempt": attempt_index,
+                    "started_at": started,
+                    "finished_at": finished,
+                    "returncode": completed.returncode,
+                    "result": result,
+                    "run_dir": rel(Path(run_dir)) if run_dir else "",
+                    "stdout_log": rel(attempt_dir / "stdout.log"),
+                    "bdd": bdd,
+                }
+                attempts.append(attempt)
+                write_json(attempt_dir / "attempt.json", attempt)
+                append_jsonl(run_root / "attempts.jsonl", attempt)
+                print(f"attempt={attempt_index} result={result} returncode={completed.returncode} run_dir={attempt['run_dir']}")
+                if result in PASS_RESULTS:
+                    break
+                if result in BLOCKED_RESULTS and not args.retry_blocked:
+                    break
+
+        if post_adapter_flows:
+            adapter_flow_records["post"] = run_adapter_flow_phase(
+                phase="post",
+                flows=post_adapter_flows,
+                run_root=run_root,
+                env_path=env_path,
+                task=task,
+                args=args,
+                mode=mode,
+                allow_side_effects=allow_side_effects,
+                env_payload=env_payload,
+            )
     except RuntimeError as exc:
         attempt = {
             "attempt": len(attempts) + 1,
@@ -457,7 +676,10 @@ def main() -> int:
     state_diff = diff_states(before, after)
     write_json(run_root / "state" / "after.json", after)
     write_json(run_root / "state_diff.json", state_diff)
-    aggregate = aggregate_attempts(attempts, max_attempts)
+    if adapter_flow_blocker and not attempts:
+        aggregate = {"result": adapter_flow_blocker.get("result", "BLOCKED"), "stability": "ADAPTER_FLOW_BLOCKED", "attempts": 0}
+    else:
+        aggregate = aggregate_attempts(attempts, max_attempts)
     record = {
         "schema": "polaris.execution_record.v1",
         "task": rel(task_path),
@@ -469,6 +691,7 @@ def main() -> int:
         "stability": aggregate["stability"],
         "max_retries": max_retries,
         "preflight": preflight,
+        "adapter_flows": adapter_flow_records,
         "state": {
             "before": rel(run_root / "state" / "before.json"),
             "after": rel(run_root / "state" / "after.json"),

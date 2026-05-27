@@ -80,8 +80,9 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 ## 当前优化执行入口
 
 - 新增任务优先走 `satellite/cucumber-agent-testing/scripts/run_optimized_task.py`。
-- 它会在现有 `run_task.py` 外层生成 `execution_record.json`、`attempts.jsonl`、`state/before.json`、`state/after.json`、`state_diff.json`。
+- 它会在现有 `run_task.py` 外层生成 `execution_record.json`、`attempts.jsonl`、`adapter_flows/pre.json`、`adapter_flows/post.json`、`state/before.json`、`state/after.json`、`state_diff.json`。
 - 执行记录、重试、资源/约束预检优先走 `run_optimized_task.py`；只有调试底层 Cucumber runner 时才直接用 `run_task.py`。
+- 需要稳定前置/收尾动作时，把 `execution.adapter_flows.pre/post` 写进 task；`required=true` 的 pre flow 失败应阻断主流程，避免前置问题误判成固件问题。
 - 场景生成走 `generate_scene.py`；新场景执行优先走 `run_kernel_scene.py`，只有需要对比旧直接 runner 时才用 `run_scene.py`。
 - Replay VM-lite、Simulation-lite、Assertion DSL-lite 分别走 `replay_vm.py`、`simulate_runtime.py`、`run_assertion_dsl.py`。
 - Assertion DSL-lite 已支持 `EXPECT_SEQUENCE`、`EXPECT_RESPONSE`、`EXPECT_DURATION`，可表达 ASR/Command 到 TTS/Media 的响应链路和媒体持续时间；复杂业务仍优先固化到 Python profile 断言。

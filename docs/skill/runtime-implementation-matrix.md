@@ -40,6 +40,7 @@
 | Analytics Trend MVP | 扫描 `execution_record.json`，按 day/project/task 聚合 result/stability 趋势 | `runtime/analytics_trend.py`, `scripts/build_analytics_trend.py` |
 | Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `runtime/device_adapter.py`, `scripts/run_adapter_action.py` |
 | Adapter Flow Map MVP | 常见前置/调试流程映射到 adapter action 序列，默认 dry-run 渲染命令 | `references/adapter_flow_map.json`, `scripts/plan_adapter_flow.py` |
+| Optimized Task Adapter Flow Bridge | `run_optimized_task.py` 支持 `execution.adapter_flows.pre/post`，把前置/收尾动作纳入 execution_record | `scripts/run_optimized_task.py` |
 | Validation Kernel Lifecycle MVP | compile_ir、preflight、adapter/capability/resource/constraint 快照、可选 run_optimized_task、kernel_record/lifecycle；真机 replay 存在时自动生成 event graph、state assertions、Replay VM-lite snapshot | `runtime/validation_kernel.py`, `scripts/run_validation_kernel.py` |
 | Kernel Scene Scheduler MVP | scene 每个节点走独立 Kernel 生命周期，输出 scene 级记录和节点级 kernel_record | `scripts/run_kernel_scene.py` |
 | 默认状态断言策略 | 按 runtime profile 自动追加 WakeDetected、ASR/Command、媒体响应、禁止 Crash/Reboot/误唤醒等兜底断言 | `references/optimization/state_assertion_policy.json` |
@@ -185,3 +186,11 @@
 | WB01 环境切换 | `--flow switch_device_env` 渲染 AP `set_device_env`，PLAN_OK |
 | WB01 云控音量 | `--flow set_volume --param volume=35` 渲染 cloud API 命令，PLAN_OK |
 | WS63 声卡播放 | `--flow wake_audio_file --param audio_file=sample.wav` 渲染 listenai-play + WS63 声卡 key，PLAN_OK |
+
+## 2026-05-27 Optimized Task Adapter Flow Bridge 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| print-command | 带 `execution.adapter_flows.pre/post` 的临时 task 可打印 pre/post adapter flow 命令和主 `run_task.py` 命令 |
+| dry-run 执行 | WB01 临时 task pre=`pa_recover`、`switch_device_env`，post=`hotspot_status`，主流程 dry-run PASS |
+| execution_record | `execution_record.json` 已记录 `adapter_flows.pre/post`，pre/post 均 PLAN_OK，主 attempts=1 |
