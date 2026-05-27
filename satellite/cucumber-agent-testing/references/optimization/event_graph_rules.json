@@ -1,0 +1,23 @@
+{
+  "schema": "polaris.event_graph_rules.v1",
+  "name": "default_project_overlay",
+  "description": "Optional project-specific Event Graph overlay. Add enabled rules here when a project has private cloud/media/TTS markers that should become causal edges without editing runtime/event_graph.py.",
+  "rules": [
+    {
+      "id": "cloud_media_response_marker",
+      "enabled": false,
+      "relation": "project_cloud_media_response",
+      "confidence": "medium",
+      "within_ms": 15000,
+      "reason": "project-specific cloud/media marker follows ASR or command",
+      "src": {
+        "event_types": ["ASRDetected", "CommandDetected"]
+      },
+      "dst": {
+        "event_types": ["TTSStarted", "MediaStarted"],
+        "contains_any": ["music", "news", "crosstalk", "tts", "mp3", "media"]
+      },
+      "warn_if_unmatched": false
+    }
+  ]
+}

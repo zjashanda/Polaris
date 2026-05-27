@@ -518,6 +518,8 @@ python satellite\cucumber-agent-testing\scripts\plan_adapter_flow.py --flow wake
 - Validation Kernel 生命周期已完成本地 MVP：`run_validation_kernel.py` 会产出 `kernel_record.json`、`lifecycle.jsonl`、`validation_ir.json`、adapter/capability/resource/constraint 快照，并可委托 `run_optimized_task.py` 执行。
 - Kernel scene 调度已接入：`run_kernel_scene.py` 会让 scene 每个节点都走 Kernel 生命周期；真机执行后的 runtime replay 会自动补齐 event graph、默认 state assertions、state coverage policy、Replay VM-lite snapshot 和 `runtime_analysis.json`。
 
+Event Graph 支持项目级规则 overlay：把私有云端/媒体/TTS marker 规则写到 `satellite/cucumber-agent-testing/references/optimization/event_graph_rules.json`，或执行时通过 `build_event_graph.py --rules <file>` 指定。规则可把“ASR/Command 后出现某类 TTS/Media marker”补成项目专属因果边，不需要改核心 `runtime/event_graph.py`。
+
 ## 10. Event Runtime Phase 1 结构
 
 当前已开始按高级优化方案做 Phase 1：

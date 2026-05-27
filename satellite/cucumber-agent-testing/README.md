@@ -272,6 +272,8 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --summarize-run 
 
 `build_event_graph.py` 已输出 `risk_summary`，并补充媒体、云端响应、打断、重启/崩溃因果边。在线压测后分析异常时，优先看 `possible_reboot_after_activity`、`possible_crash_after_activity`、`media_interrupted`、`interrupt_to_recognition`、`media_started_to_completed` 等关系。
 
+如果某个项目的云端、音乐、新闻、相声、TTS 或 MP3 marker 比较特殊，不要直接改核心代码；先把规则写到 `references/optimization/event_graph_rules.json`，或用 `build_event_graph.py --rules <file>` 指定 overlay。规则命中后会在 `risk_summary.rule_overlay` 和 `relation_counts` 中体现。
+
 `run_adapter_action.py` 默认 dry-run，不会真实占用串口/声卡/云端。当前 registry 已覆盖控制口 PA/上下电、AP 设备环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行必须显式追加 `--execute --allow-side-effects`。
 
 `plan_adapter_flow.py` 把常见前置/调试流程固定映射到 Adapter Executor，例如 `pa_recover`、`power_on`、`switch_device_env`、`ensure_online`、`wake_audio_file`、`set_volume`、`set_half_duplex`、`set_full_duplex`。它默认只渲染命令，真执行同样必须追加 `--execute --allow-side-effects`。

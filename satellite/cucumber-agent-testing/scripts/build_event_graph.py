@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 SCRIPT_DIR = Path(__file__).resolve().parent
 BDD_ROOT = SCRIPT_DIR.parents[0]
 WORKSPACE_ROOT = SCRIPT_DIR.parents[2]
+DEFAULT_RULES = BDD_ROOT / "references" / "optimization" / "event_graph_rules.json"
 if str(BDD_ROOT) not in sys.path:
     sys.path.insert(0, str(BDD_ROOT))
 
@@ -48,6 +49,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build Polaris runtime event graph")
     parser.add_argument("--input-dir", default="", help="run_dir or artifact directory")
     parser.add_argument("--timeline", default="", help="existing timeline.json")
+    parser.add_argument("--rules", default="", help="optional event graph rule overlay JSON")
+    parser.add_argument("--no-default-rules", action="store_true", help="do not load references/optimization/event_graph_rules.json")
     parser.add_argument("--out-dir", default="")
     args = parser.parse_args()
 
@@ -63,7 +66,16 @@ def main() -> int:
     else:
         raise SystemExit("--input-dir or --timeline is required")
 
-    graph = build_event_graph(timeline)
+    rules: Dict[str, Any] = {}
+    if args.rules:
+        rules_path = Path(args.rules)
+        if not rules_path.is_absolute():
+            rules_path = (WORKSPACE_ROOT / rules_path).resolve()
+        rules = load_json(rules_path)
+    elif DEFAULT_RULES.exists() and not args.no_default_rules:
+        rules = load_json(DEFAULT_RULES)
+
+    graph = build_event_graph(timeline, rule_overlay=rules)
     out_dir = Path(args.out_dir) if args.out_dir else BDD_ROOT / "debug" / "event_graph" / default_name
     if not out_dir.is_absolute():
         out_dir = (WORKSPACE_ROOT / out_dir).resolve()

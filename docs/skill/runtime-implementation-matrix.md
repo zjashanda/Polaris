@@ -34,6 +34,7 @@
 | Device Adapter Interface MVP | serial/audio/control/network/cloud adapter registry，不替换 tools，先统一描述能力、资源和动作 | `runtime/device_adapter.py`, `scripts/inspect_device_adapters.py` |
 | Capability Runtime MVP | 细粒度推导 AP/CP/ASR、声卡、控制口、PA、网络、云环境、半/全双工、在线媒体、打断、音频回采、媒体响应 oracle、云控权限、重启原因 oracle 等能力 | `runtime/capability_runtime.py`, `scripts/build_capability_matrix.py` |
 | Event Graph MVP | 从 Timeline 生成 `audio_caused_wake`、`wake_to_asr`、`asr/command_to_response`、媒体 start->complete、打断、网络恢复、重启/崩溃活动前因和 `risk_summary` | `runtime/event_graph.py`, `scripts/build_event_graph.py` |
+| Event Graph Rule Overlay MVP | 项目私有云端/媒体/TTS marker 可通过 JSON overlay 增补因果边，不改核心图逻辑 | `references/optimization/event_graph_rules.json`, `runtime/event_graph.py` |
 | State Assertion DSL-lite | 在 `runtime_state.json` 上执行状态断言、历史事件必选/任选、禁止事件 | `runtime/state_assertion_dsl.py`, `scripts/run_state_assertion_dsl.py` |
 | State Coverage Policy MVP | 按 profile 检查 `runtime_state.coverage`，输出覆盖阈值 PASS/WARN/FAIL，并接入 Kernel runtime analysis | `runtime/state_coverage_policy.py`, `scripts/run_state_coverage_policy.py` |
 | Validation IR MVP | task/scene/compiled feature plan + env 编译为 `polaris.validation_ir.v1` 或 `polaris.validation_ir_bundle.v1`，统一包含 resource/constraint/adapter/capability 与 intent/actions/expect | `runtime/validation_ir.py`, `scripts/compile_validation_ir.py` |
@@ -50,7 +51,7 @@
 | 方案项 | 当前状态 | 后续差距 |
 |---|---|---|
 | Validation Kernel | 已有 plugin kernel、Validation IR MVP、本地 lifecycle runner、runner 后 replay/event graph/state/replay_vm 侧证据、scene scheduler | adapter execute 尚未完全成为所有底层 tools 的唯一执行通道 |
-| Event Graph | 已有本地因果图 MVP，已覆盖媒体响应、媒体完成、打断、网络恢复、重启/崩溃前因和风险摘要 | 事件因果仍是启发式，尚未覆盖所有项目私有云端协议链路 |
+| Event Graph | 已有本地因果图 MVP，已覆盖媒体响应、媒体完成、打断、网络恢复、重启/崩溃前因、风险摘要和项目规则 overlay | 事件因果仍是启发式，项目私有云端协议链路需要继续补 overlay 规则 |
 | Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率、State Assertion DSL-lite 和 coverage 阈值策略 MVP | 尚未实现完整层级状态树；项目私有 profile 阈值还需随实机资料细化 |
 | Capability Runtime | 已有项目能力矩阵 MVP，已显式列出音频回采、媒体响应 oracle、云控配置权限、boot reason oracle 缺口 | codec、真实出声质量评分、具体云 API token 权限校验仍需项目资料或实机接口 |
 | Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP，常用串口/声卡/网络/云控动作可统一 dry-run 规划 | 现有长流程 runner 尚未全部改为只经 adapter execute interface 调用 |
@@ -194,3 +195,12 @@
 | print-command | 带 `execution.adapter_flows.pre/post` 的临时 task 可打印 pre/post adapter flow 命令和主 `run_task.py` 命令 |
 | dry-run 执行 | WB01 临时 task pre=`pa_recover`、`switch_device_env`，post=`hotspot_status`，主流程 dry-run PASS |
 | execution_record | `execution_record.json` 已记录 `adapter_flows.pre/post`，pre/post 均 PLAN_OK，主 attempts=1 |
+
+## 2026-05-27 Event Graph Rule Overlay 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| 默认规则文件 | 新增 `references/optimization/event_graph_rules.json`，默认示例规则 disabled，不影响既有图 |
+| CLI overlay | `build_event_graph.py --rules <file>` 支持加载项目规则 |
+| Overlay smoke | WS63 first_wake timeline + smoke rule 输出 `rule_edge_count=7`、`smoke_asr_to_response_overlay=7`、warnings=0 |
+| Kernel 集成 | Validation Kernel 后处理默认加载 `event_graph_rules.json`，项目启用规则后会进入 `runtime_analysis` 侧证据 |

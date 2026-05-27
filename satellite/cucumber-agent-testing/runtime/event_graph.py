@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Heuristic event graph builder over a replay Timeline."""
+"""Heuristic event graph builder over a replay Timeline.
+
+Project-specific cloud/media markers can be added through a small rule overlay
+without changing the core graph heuristics.
+"""
 
 from __future__ import annotations
 
@@ -94,7 +98,105 @@ def _append_edge(edges: List[EventGraphEdge], edge: EventGraphEdge, seen: set[tu
     edges.append(edge)
 
 
-def build_event_graph(timeline: Timeline) -> EventGraph:
+def _as_text_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if str(value or "").strip():
+        return [str(value).strip()]
+    return []
+
+
+def _payload_text(event: ValidationEvent) -> str:
+    payload = event.payload or {}
+    parts = [event.raw or ""]
+    for key, value in payload.items():
+        parts.append(str(key))
+        parts.append(str(value))
+    return "\n".join(parts).lower()
+
+
+def _event_matches(event: ValidationEvent, spec: Dict[str, Any]) -> bool:
+    event_types = _as_text_list(spec.get("event_types") or spec.get("event_type"))
+    if event_types and event.event_type not in event_types:
+        return False
+    sources = {normalize_source(item) for item in _as_text_list(spec.get("sources") or spec.get("source"))}
+    if sources and normalize_source(event.source) not in sources:
+        return False
+    plugins = set(_as_text_list(spec.get("plugins") or spec.get("plugin")))
+    if plugins and event.plugin not in plugins:
+        return False
+    payload_equals = spec.get("payload_equals", {}) if isinstance(spec.get("payload_equals"), dict) else {}
+    for key, expected in payload_equals.items():
+        if str((event.payload or {}).get(key, "")) != str(expected):
+            return False
+    text = _payload_text(event)
+    contains_all = [item.lower() for item in _as_text_list(spec.get("contains_all"))]
+    if contains_all and not all(item in text for item in contains_all):
+        return False
+    contains_any = [item.lower() for item in _as_text_list(spec.get("contains_any"))]
+    if contains_any and not any(item in text for item in contains_any):
+        return False
+    not_contains = [item.lower() for item in _as_text_list(spec.get("not_contains"))]
+    if not_contains and any(item in text for item in not_contains):
+        return False
+    return True
+
+
+def _apply_rule_overlay(
+    timeline: Timeline,
+    edges: List[EventGraphEdge],
+    seen: set[tuple[str, str, str]],
+    warnings: List[str],
+    rule_overlay: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not rule_overlay:
+        return {"enabled": False, "rule_edge_count": 0, "matched_rules": []}
+    rule_edge_count = 0
+    matched_rules: List[Dict[str, Any]] = []
+    for rule in rule_overlay.get("rules", []) if isinstance(rule_overlay.get("rules"), list) else []:
+        if not isinstance(rule, dict) or rule.get("enabled") is False:
+            continue
+        relation = str(rule.get("relation", "") or "").strip()
+        if not relation:
+            continue
+        src_spec = rule.get("src", {}) if isinstance(rule.get("src"), dict) else {}
+        dst_spec = rule.get("dst", {}) if isinstance(rule.get("dst"), dict) else {}
+        within_ms = int(rule.get("within_ms", 15000) or 15000)
+        confidence = str(rule.get("confidence", "medium") or "medium")
+        reason = str(rule.get("reason", rule.get("id", "rule_overlay")) or "rule_overlay")
+        rule_id = str(rule.get("id", relation) or relation)
+        matches = 0
+        for dst in timeline.events:
+            if not _event_matches(dst, dst_spec) or dst.timestamp_ms is None:
+                continue
+            candidates = [
+                src
+                for src in timeline.events
+                if src.event_id != dst.event_id
+                and src.timestamp_ms is not None
+                and src.timestamp_ms <= dst.timestamp_ms
+                and int(dst.timestamp_ms - src.timestamp_ms) <= within_ms
+                and _event_matches(src, src_spec)
+            ]
+            if candidates:
+                src = sorted(candidates, key=lambda event: int(event.timestamp_ms or 0))[-1]
+                before = len(edges)
+                _append_edge(edges, EventGraphEdge(src.event_id, dst.event_id, relation, confidence, _delta(src, dst), reason), seen)
+                if len(edges) > before:
+                    rule_edge_count += 1
+                    matches += 1
+            elif rule.get("warn_if_unmatched"):
+                warnings.append(f"Event graph rule `{rule_id}` matched dst event `{dst.event_id}` but no src was found within {within_ms}ms.")
+        matched_rules.append({"id": rule_id, "relation": relation, "matches": matches})
+    return {
+        "enabled": True,
+        "rule_set": rule_overlay.get("name", ""),
+        "rule_edge_count": rule_edge_count,
+        "matched_rules": matched_rules,
+    }
+
+
+def build_event_graph(timeline: Timeline, rule_overlay: Optional[Dict[str, Any]] = None) -> EventGraph:
     nodes = [
         EventGraphNode(
             event_id=event.event_id,
@@ -218,6 +320,7 @@ def build_event_graph(timeline: Timeline) -> EventGraph:
             _append_edge(edges, EventGraphEdge(anchor.event_id, reboot.event_id, relation, "medium", _delta(anchor, reboot)), seen)
 
     warnings: List[str] = []
+    overlay_summary = _apply_rule_overlay(timeline, edges, seen, warnings, rule_overlay)
     if wakes and not any(edge.relation == "audio_caused_wake" for edge in edges):
         warnings.append("WakeDetected exists but no audio_caused_wake edge was inferred.")
     orphan_media_completed = [
@@ -249,6 +352,7 @@ def build_event_graph(timeline: Timeline) -> EventGraph:
         "media_completed_events": len(media_completed),
         "orphan_media_completed": len(orphan_media_completed),
         "responses_without_upstream": len(responses_without_upstream),
+        "rule_overlay": overlay_summary,
         "relation_counts": dict(sorted(relation_counts.items())),
     }
     return EventGraph(nodes=nodes, edges=edges, warnings=warnings, risk_summary=risk_summary)

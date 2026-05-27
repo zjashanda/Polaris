@@ -339,7 +339,7 @@ class ValidationKernel:
             analysis_dir.mkdir(parents=True, exist_ok=True)
 
             timeline = _timeline_from_payload(package)
-            graph = build_event_graph(timeline)
+            graph = build_event_graph(timeline, rule_overlay=self._default_event_graph_rules())
             write_json(analysis_dir / "event_graph.json", graph.to_dict())
             (analysis_dir / "event_graph_report.md").write_text(render_event_graph_markdown(graph), encoding="utf-8")
 
@@ -464,6 +464,10 @@ class ValidationKernel:
     def _default_state_policy_payload(self) -> Dict[str, Any]:
         policy_path = self.scripts_dir.parent / "references" / "optimization" / "state_assertion_policy.json"
         return _load_json(policy_path)
+
+    def _default_event_graph_rules(self) -> Dict[str, Any]:
+        rules_path = self.scripts_dir.parent / "references" / "optimization" / "event_graph_rules.json"
+        return _load_json(rules_path)
 
     @staticmethod
     def _aggregate_runtime_analysis(analyses: List[Dict[str, Any]]) -> str:
