@@ -13,7 +13,6 @@ import csv
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -36,6 +35,7 @@ from run_cucumber import (  # noqa: E402
 )
 from polaris_env import load_default_env  # noqa: E402
 from tools.audio.polaris_audio_builder import build_sequence  # noqa: E402
+from tools.core.polaris_adapter_bridge import run_adapter_action_capture  # noqa: E402
 from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports  # noqa: E402
 from tools.core.polaris_runtime import latest_heartbeat, parse_prefixed_timestamp, read_lines_between  # noqa: E402
 from tools.execution.polaris_case_runner import default_playback_device_key, playback_device_label, run_playback, sanitize_logs, summarize_window  # noqa: E402
@@ -466,34 +466,23 @@ class StressRun:
 
     def run_network_recovery(self, label: str) -> Dict[str, Any]:
         log_path = self.logs_dir / f"{label}_{datetime.now().strftime('%H%M%S')}.log"
-        cmd = [
-            sys.executable,
-            "tools/device/polaris_network_orchestrator.py",
-            "ensure-online",
-            "--label",
-            label,
-        ]
         started = datetime.now()
-        with log_path.open("w", encoding="utf-8", newline="") as handle:
-            handle.write("$ " + " ".join(cmd) + "\n")
-            handle.flush()
-            proc = subprocess.run(
-                cmd,
-                cwd=str(WORKSPACE_ROOT),
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=180,
-                check=False,
-            )
+        result = run_adapter_action_capture(
+            adapter_id="network.local",
+            action="ensure_online",
+            params={"ssid": str(self.env.get("network", {}).get("wifi_ssid", "") if isinstance(self.env.get("network"), dict) else ""), "pwd": str(self.env.get("network", {}).get("wifi_password", "") if isinstance(self.env.get("network"), dict) else "")},
+            timeout_s=180,
+            execute=True,
+            allow_side_effects=True,
+            log_path=log_path,
+        )
         return {
             "label": label,
             "started_at": started.isoformat(timespec="seconds"),
             "ended_at": datetime.now().isoformat(timespec="seconds"),
-            "returncode": proc.returncode,
+            "returncode": result.returncode,
             "log_path": rel(log_path),
+            "adapter": result.to_dict(),
         }
 
     def maybe_recover(self) -> None:

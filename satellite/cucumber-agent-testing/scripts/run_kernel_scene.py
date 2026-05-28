@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -36,6 +37,15 @@ PASS_RESULTS = {"PASS", "PLAN_OK", "DRY_RUN_OK", "PASS_WITH_SKIPPED_TIMING"}
 
 def stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+
+
+def safe_run_label(value: str, *, max_len: int = 28) -> str:
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "scene").strip("._-")
+    if not label:
+        label = "scene"
+    if len(label) <= max_len:
+        return label
+    return label[:max_len].rstrip("._-") or "scene"
 
 
 def now_iso() -> str:
@@ -116,6 +126,7 @@ def main() -> int:
     parser.add_argument("--manage-session", action="store_true")
     parser.add_argument("--runtime-strict", action="store_true")
     parser.add_argument("--max-retries", type=int, default=0)
+    parser.add_argument("--retry-blocked", action="store_true", help="节点 runner 遇到 BLOCKED 时也按 max-retries 重试。")
     parser.add_argument("--honor-gaps", action="store_true", help="execute 模式按 node.metadata.random_gap_s 等待。")
     parser.add_argument("--emit-ir-bundle", action="store_true", help="输出 scene 级 Validation IR bundle，用于检查 scene/task 统一 IR。")
     parser.add_argument("--out-root", default="")
@@ -128,7 +139,7 @@ def main() -> int:
     env_payload = load_env_payload(env_path)
     validation = validate_scene_graph(scene, network_configured=network_configured(env_payload))
     scene_id = str(scene.get("scene_id", scene_path.stem) or scene_path.stem)
-    out_root = resolve_path(args.out_root) if args.out_root else BDD_ROOT / "debug" / "kernel_scene_runs" / f"{stamp()}_{scene_id}"
+    out_root = resolve_path(args.out_root) if args.out_root else BDD_ROOT / "debug" / "kernel_scene_runs" / f"{stamp()}_{safe_run_label(scene_id)}"
     out_root.mkdir(parents=True, exist_ok=True)
     write_json(out_root / "scene_validation.json", validation)
     ir_bundle_path = ""
@@ -185,6 +196,8 @@ def main() -> int:
                 cmd.append("--manage-session")
             if args.runtime_strict:
                 cmd.append("--runtime-strict")
+            if args.retry_blocked:
+                cmd.append("--retry-blocked")
             print("$ " + quote_cmd(cmd))
         print(out_root)
         if ir_bundle_path:
@@ -230,6 +243,7 @@ def main() -> int:
             manage_session=args.manage_session,
             runtime_strict=args.runtime_strict,
             max_retries=args.max_retries,
+            retry_blocked=args.retry_blocked,
             command_text=str(node.get("command_text", "") or ""),
         )
         item = {

@@ -23,12 +23,12 @@ from typing import Dict, List, Tuple
 import yaml
 
 from tools.audio.polaris_audio_builder import build_from_case
+from tools.core.polaris_adapter_bridge import run_audio_playback_adapter
 from tools.core.polaris_config import read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, read_lines_between, workspace_root
 from tools.probe.polaris_state_probe import diff_states, snapshot
 
 
-LISTENAI_PLAY_SCRIPT = Path(r"C:\Users\Administrator\.codex\skills\listenai-play\scripts\listenai_play.py")
 ENV_CONFIG = workspace_root() / "config" / "polaris_env.json"
 TONE_RE = re.compile(r"play next tone (?P<tone>\d+):", re.I)
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -89,40 +89,28 @@ def run_playback(
     log_prefix: str = "play",
 ) -> subprocess.CompletedProcess:
     device_key = str(device_key or "").strip()
-    cmd = [
-        sys.executable,
-        str(LISTENAI_PLAY_SCRIPT),
-        "play",
-        "--audio-file",
-        str(audio_file),
-    ]
-    if device_key:
-        cmd.extend(["--device-key", device_key])
-    if skip_probe:
-        cmd.append("--skip-probe")
-    started_at = datetime.now()
-    completed = subprocess.run(
-        cmd,
-        cwd=str(workspace_root()),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=playback_timeout_seconds(audio_file),
+    capture = run_audio_playback_adapter(
+        audio_file,
+        device_key,
+        skip_probe=skip_probe,
+        timeout_s=playback_timeout_seconds(audio_file),
     )
-    finished_at = datetime.now()
+    completed = capture.completed
+    started_at = capture.started_at
+    finished_at = capture.finished_at
     (execution_dir / f"{log_prefix}_stdout.log").write_text(completed.stdout, encoding="utf-8")
     (execution_dir / f"{log_prefix}_stderr.log").write_text(completed.stderr, encoding="utf-8")
     (execution_dir / f"{log_prefix}_command.json").write_text(
         json.dumps(
             {
-                "cmd": cmd,
+                "cmd": list(completed.args),
                 "returncode": completed.returncode,
                 "device_key": device_key,
                 "playback_device": playback_device_label(device_key),
                 "process_started_at": started_at.isoformat(timespec="milliseconds"),
-                "playback_started_at": started_at.isoformat(timespec="milliseconds"),
+                "playback_started_at": capture.playback_started_at.isoformat(timespec="milliseconds"),
                 "finished_at": finished_at.isoformat(timespec="milliseconds"),
+                "adapter_executor": capture.action_result.to_dict(),
             },
             ensure_ascii=False,
             indent=2,
@@ -137,7 +125,7 @@ def run_playback(
                 "audio_file": str(audio_file),
                 "device_key": device_key,
                 "log_prefix": log_prefix,
-                "timestamp_source": "process_started_at",
+                "timestamp_source": "adapter_executor",
             },
         },
         {

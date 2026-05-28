@@ -65,11 +65,12 @@ def main() -> int:
 
     env_path = resolve_env_path(args.env_file, WORKSPACE_ROOT)
     registry = build_adapter_registry(load_env_payload(env_path))
+    params = {"env_file": str(env_path), **parse_params(args.param)}
     result = execute_adapter_action(
         registry,
         adapter_id=args.adapter_id,
         action_name=args.action,
-        params=parse_params(args.param),
+        params=params,
         allow_side_effects=args.allow_side_effects,
         dry_run=not args.execute,
         cwd=WORKSPACE_ROOT,

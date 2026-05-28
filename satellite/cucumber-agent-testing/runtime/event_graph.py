@@ -148,6 +148,7 @@ def _apply_rule_overlay(
     seen: set[tuple[str, str, str]],
     warnings: List[str],
     rule_overlay: Optional[Dict[str, Any]],
+    project_id: str = "",
 ) -> Dict[str, Any]:
     if not rule_overlay:
         return {"enabled": False, "rule_edge_count": 0, "matched_rules": []}
@@ -158,6 +159,12 @@ def _apply_rule_overlay(
             continue
         relation = str(rule.get("relation", "") or "").strip()
         if not relation:
+            continue
+        projects = set(_as_text_list(rule.get("projects")))
+        if projects and project_id and project_id not in projects:
+            continue
+        if projects and not project_id:
+            matched_rules.append({"id": str(rule.get("id", relation) or relation), "relation": relation, "matches": 0, "skipped": "project_id_missing"})
             continue
         src_spec = rule.get("src", {}) if isinstance(rule.get("src"), dict) else {}
         dst_spec = rule.get("dst", {}) if isinstance(rule.get("dst"), dict) else {}
@@ -196,7 +203,7 @@ def _apply_rule_overlay(
     }
 
 
-def build_event_graph(timeline: Timeline, rule_overlay: Optional[Dict[str, Any]] = None) -> EventGraph:
+def build_event_graph(timeline: Timeline, rule_overlay: Optional[Dict[str, Any]] = None, project_id: str = "") -> EventGraph:
     nodes = [
         EventGraphNode(
             event_id=event.event_id,
@@ -320,7 +327,7 @@ def build_event_graph(timeline: Timeline, rule_overlay: Optional[Dict[str, Any]]
             _append_edge(edges, EventGraphEdge(anchor.event_id, reboot.event_id, relation, "medium", _delta(anchor, reboot)), seen)
 
     warnings: List[str] = []
-    overlay_summary = _apply_rule_overlay(timeline, edges, seen, warnings, rule_overlay)
+    overlay_summary = _apply_rule_overlay(timeline, edges, seen, warnings, rule_overlay, project_id=project_id)
     if wakes and not any(edge.relation == "audio_caused_wake" for edge in edges):
         warnings.append("WakeDetected exists but no audio_caused_wake edge was inferred.")
     orphan_media_completed = [

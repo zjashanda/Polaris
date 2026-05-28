@@ -40,7 +40,18 @@ TIMING_RESULTS = {"TIMING_AMBIGUOUS"}
 
 
 def stamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    # Millisecond stamps can collide when precheck/print/dry-run are launched
+    # together; include pid so evidence directories stay isolated.
+    return f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}_{os.getpid()}"
+
+
+def safe_run_label(value: str, *, max_len: int = 16) -> str:
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "task").strip("._-")
+    if not label:
+        label = "task"
+    if len(label) <= max_len:
+        return label
+    return label[:max_len].rstrip("._-") or "task"
 
 
 def now_iso() -> str:
@@ -213,6 +224,7 @@ def render_placeholders(value: Any, context: Dict[str, str]) -> str:
 
 def adapter_flow_context(args: argparse.Namespace, task: Dict[str, Any], env_payload: Dict[str, Any], mode: str) -> Dict[str, str]:
     inputs = task.get("inputs", {}) if isinstance(task.get("inputs"), dict) else {}
+    execution = task.get("execution", {}) if isinstance(task.get("execution"), dict) else {}
     return {
         "mode": mode,
         "wake_word": first_non_empty(args.wake_word, inputs.get("wake_word"), nested(env_payload, "device", "wake_word"), "小美小美"),
@@ -223,9 +235,9 @@ def adapter_flow_context(args: argparse.Namespace, task: Dict[str, Any], env_pay
         "device_key": first_non_empty(args.device_key, nested(env_payload, "audio", "default_playback_device_key")),
         "wifi_ssid": first_non_empty(nested(env_payload, "network", "wifi_ssid"), env_payload.get("current_connected_ssid")),
         "wifi_password": first_non_empty(nested(env_payload, "network", "wifi_password"), env_payload.get("wifi_password")),
-        "half_duplex_timeout_s": first_non_empty(nested(env_payload, "timeouts", "half_duplex_timeout_s"), "15"),
-        "full_duplex_timeout_s": first_non_empty(nested(env_payload, "timeouts", "full_duplex_timeout_s"), "60"),
-        "volume": first_non_empty(nested(env_payload, "audio", "playback_volume"), "30"),
+        "half_duplex_timeout_s": first_non_empty(execution.get("half_duplex_timeout_s"), nested(env_payload, "timeouts", "half_duplex_timeout_s"), "15"),
+        "full_duplex_timeout_s": first_non_empty(execution.get("full_duplex_timeout_s"), nested(env_payload, "timeouts", "full_duplex_timeout_s"), "60"),
+        "volume": first_non_empty(execution.get("volume"), nested(env_payload, "audio", "playback_volume"), "30"),
     }
 
 
@@ -330,6 +342,7 @@ def run_adapter_flow_phase(
             errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         stdout_path.write_text(completed.stdout or "", encoding="utf-8")
         payload = load_json(out_path)
@@ -512,7 +525,7 @@ def main() -> int:
     max_attempts = max(1, max_retries + 1)
     out_root = resolve_workspace_path(args.out_root).resolve() if args.out_root else default_out_root(env_payload).resolve()
     task_id = first_non_empty(task.get("task_id"), task_path.stem)
-    run_root = out_root / f"{stamp()}_{task_id}"
+    run_root = out_root / f"{stamp()}_{safe_run_label(task_id)}"
     run_root.mkdir(parents=True, exist_ok=True)
 
     preflight = evaluate_constraints(task=task, env_payload=env_payload, mode=mode, allow_side_effects=allow_side_effects, tag=args.tag)
@@ -615,6 +628,7 @@ def main() -> int:
                     errors="replace",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                 )
                 finished = now_iso()
                 output = completed.stdout or ""

@@ -5,16 +5,43 @@
     "online_mixed_stress": {
       "description": "在线基础命令、音乐、相声、新闻、烹饪问答、百科问答和组合交互的加权随机压测。",
       "mode": "weighted_random_bag",
-      "random_gap_s": [6, 28],
-      "observe_s": [18, 42],
+      "random_gap_s": [
+        6,
+        28
+      ],
+      "observe_s": [
+        18,
+        42
+      ],
       "bag": [
-        { "category": "basic_command", "weight": 4 },
-        { "category": "music", "weight": 3 },
-        { "category": "crosstalk", "weight": 3 },
-        { "category": "news", "weight": 3 },
-        { "category": "qa_cooking", "weight": 1 },
-        { "category": "qa_encyclopedia", "weight": 1 },
-        { "category": "combo", "weight": 1 }
+        {
+          "category": "basic_command",
+          "weight": 4
+        },
+        {
+          "category": "music",
+          "weight": 3
+        },
+        {
+          "category": "crosstalk",
+          "weight": 3
+        },
+        {
+          "category": "news",
+          "weight": 3
+        },
+        {
+          "category": "qa_cooking",
+          "weight": 1
+        },
+        {
+          "category": "qa_encyclopedia",
+          "weight": 1
+        },
+        {
+          "category": "combo",
+          "weight": 1
+        }
       ],
       "phrases": {
         "basic_command": [
@@ -79,6 +106,71 @@
           "[HTTPC][ERR]",
           "[http_retry] read_failed"
         ]
+      }
+    },
+    "online_full_duplex_matrix": {
+      "description": "在线全双工 FD-002~FD-012 的随机补充策略：连续对话、媒体打断、超时边界、异常矩阵和稳定性混合。",
+      "mode": "weighted_random_bag",
+      "random_gap_s": [
+        4,
+        18
+      ],
+      "observe_s": [
+        20,
+        50
+      ],
+      "bag": [
+        {
+          "category": "fd_continuous",
+          "weight": 3
+        },
+        {
+          "category": "fd_media_interrupt",
+          "weight": 2
+        },
+        {
+          "category": "fd_timeout_boundary",
+          "weight": 1
+        },
+        {
+          "category": "fd_exception_probe",
+          "weight": 1
+        },
+        {
+          "category": "fd_stability",
+          "weight": 2
+        }
+      ],
+      "phrases": {
+        "fd_continuous": [
+          "今天天气怎么样",
+          "太阳为什么会发光",
+          "长城有多长"
+        ],
+        "fd_media_interrupt": [
+          "播放新闻",
+          "播放相声",
+          "播放一首歌"
+        ],
+        "fd_timeout_boundary": [
+          "番茄炒蛋怎么做",
+          "人工智能是什么"
+        ],
+        "fd_exception_probe": [
+          "静默监听",
+          "设备离线异常矩阵",
+          "API 环境不一致异常矩阵"
+        ],
+        "fd_stability": [
+          "随机在线全双工压测",
+          "全双工稳定性监控"
+        ]
+      },
+      "assertion_policy": {
+        "fail_on_reboot_or_crash": true,
+        "warn_on_media_error": true,
+        "warn_on_unexpected_recognition": true,
+        "timing_guard_ms": 1200
       }
     }
   }

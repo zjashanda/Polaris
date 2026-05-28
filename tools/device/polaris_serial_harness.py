@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import serial
 
@@ -451,6 +451,67 @@ def append_queue(session_dir: Path, payload: dict) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+def capture_after_write(ser: serial.Serial, duration_s: float = 0.35) -> List[str]:
+    deadline = time.time() + duration_s
+    chunks: List[str] = []
+    while time.time() < deadline:
+        try:
+            waiting = ser.in_waiting or 0
+        except Exception:
+            waiting = 0
+        if waiting:
+            chunks.append(smart_decode(ser.read(waiting)))
+        else:
+            time.sleep(0.02)
+    text = "".join(chunks).replace("\r", "")
+    return [line for line in text.split("\n") if line]
+
+
+def direct_send_command(command: str, port: str, baudrate: int, role: str, output_dir: Optional[Path] = None) -> dict:
+    payload = {
+        "ts": now_iso(),
+        "mode": "direct",
+        "port": port,
+        "role": role,
+        "baudrate": baudrate,
+        "command": command,
+    }
+    log_handle = None
+    try:
+        if output_dir is not None:
+            ensure_dir(output_dir)
+            log_path = output_dir / f"{port}.log"
+            log_handle = log_path.open("a", encoding="utf-8", newline="")
+            payload["log_path"] = str(log_path)
+        with serial.Serial(port, baudrate, timeout=0.2, write_timeout=1.0) as ser:
+            wire = (command.rstrip("\r\n") + "\r\n").encode("utf-8", errors="ignore")
+            bytes_written = ser.write(wire)
+            if bytes_written != len(wire):
+                raise serial.SerialTimeoutException(f"partial write on {port}: {bytes_written}/{len(wire)} bytes")
+            try:
+                ser.flush()
+            except Exception:
+                pass
+            if log_handle is not None:
+                log_handle.write(f"{payload['ts']} [{port}/{role}] [COMMAND] {command}\n")
+                log_handle.flush()
+            echoed = capture_after_write(ser)
+            if log_handle is not None:
+                for line in echoed:
+                    log_handle.write(f"{now_iso()} [{port}/{role}] {line}\n")
+                log_handle.flush()
+            payload["echo_lines"] = echoed
+            payload["result"] = "PASS"
+            return payload
+    except Exception as exc:
+        payload["result"] = "BLOCKED"
+        payload["error"] = str(exc)
+        return payload
+    finally:
+        if log_handle is not None:
+            log_handle.close()
+
+
 def infer_send_role(port: Optional[str], command: str) -> str:
     if port:
         explicit = port.upper()
@@ -482,21 +543,45 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
-    session_dir = resolve_session_dir(args.session_dir)
     role = args.role or infer_send_role(args.port, args.command)
     port = resolve_port(
         role,
         args.port.upper() if args.port else None,
+        sync_explicit=not args.no_sync_config,
         source="polaris_serial_harness.send",
     )
+    baudrate = args.baudrate if args.baudrate is not None else get_baudrate()
+    if args.baudrate is not None and not args.no_sync_config:
+        set_baudrate(args.baudrate, source="polaris_serial_harness.send")
+
+    session_dir = None
+    if not args.direct:
+        try:
+            session_dir = resolve_session_dir(args.session_dir)
+        except SystemExit:
+            if args.require_session:
+                raise
+            session_dir = None
+
     payload = {
         "ts": now_iso(),
         "port": port,
         "role": role,
         "command": args.command,
     }
-    append_queue(session_dir, payload)
-    print(json.dumps(payload, ensure_ascii=False))
+    if session_dir is not None:
+        payload["mode"] = "session_queue"
+        payload["session_dir"] = str(session_dir)
+        append_queue(session_dir, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else None
+    direct_payload = direct_send_command(args.command, port, baudrate, role, output_dir=output_dir)
+    print(json.dumps(direct_payload, ensure_ascii=False))
+    if direct_payload.get("result") == "PASS":
+        return 0
+    return 3
     return 0
 
 
@@ -523,7 +608,12 @@ def build_parser() -> argparse.ArgumentParser:
     send = sub.add_parser("send", help="queue a command to a writable serial port")
     send.add_argument("--session-dir", default=None)
     send.add_argument("--role", default=None, help="port role to use when --port is omitted; inferred when possible, default: ap")
-    send.add_argument("--port", default=None, help="explicit port; when provided it is synced to the role in local config")
+    send.add_argument("--port", default=None, help="explicit port; synced to local config unless --no-sync-config is set")
+    send.add_argument("--baudrate", type=int, default=None, help="default: configured baudrate")
+    send.add_argument("--no-sync-config", action="store_true", help="do not sync explicit --port/--baudrate into local config")
+    send.add_argument("--direct", action="store_true", help="bypass live session queue and write the serial port directly")
+    send.add_argument("--require-session", action="store_true", help="fail when no --session-dir or .current_result_dir is available")
+    send.add_argument("--output-dir", default="", help="optional evidence directory for direct serial send")
     send.add_argument("--command", required=True)
     send.set_defaults(func=cmd_send)
 

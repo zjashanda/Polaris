@@ -13,15 +13,19 @@ import argparse
 import csv
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
 BASE = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.validation.polaris_fa2_command_batch import run_command_batch  # noqa: E402
+
+
 DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 DEFAULT_COMMAND = "打开空调"
@@ -88,55 +92,27 @@ def run_interval(
     post_command_gap_ms: int,
 ) -> Dict[str, Any]:
     label = f"bdd_oneshot_{interval_ms}ms"
-    cmd = [
-        sys.executable,
-        "tools/validation/polaris_fa2_command_batch.py",
-        "--command-file",
-        str(command_file),
-        "--wake-word",
-        wake_word,
-        "--device-key",
-        device_key,
-        "--wake-gap-ms",
-        str(interval_ms),
-        "--post-command-gap-ms",
-        str(post_command_gap_ms),
-        "--limit",
-        "1",
-        "--label",
-        label,
-    ]
     log_path = output_dir / f"interval_{interval_ms}ms.log"
-    lines: List[str] = []
     started_at = datetime.now()
     with log_path.open("w", encoding="utf-8", newline="") as log:
-        log.write(f"$ {quote_cmd(cmd)}\n")
-        log.flush()
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(WORKSPACE_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=os.environ.copy(),
+        log.write(
+            "adapter-only fa2 batch: "
+            f"label={label} wake_gap_ms={interval_ms} post_command_gap_ms={post_command_gap_ms}\n"
         )
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.rstrip("\n")
-            lines.append(line)
-            log.write(line + "\n")
-            log.flush()
-        returncode = proc.wait()
-    summary_path: Optional[Path] = None
-    for line in lines:
-        candidate = Path(line.strip())
-        if not candidate.is_absolute():
-            candidate = WORKSPACE_ROOT / candidate
-        if (candidate / "fa2_command_batch_summary.json").exists():
-            summary_path = candidate / "fa2_command_batch_summary.json"
-            break
+        log.flush()
+        batch = run_command_batch(
+            command_file=command_file,
+            wake_word=wake_word,
+            device_key=device_key,
+            wake_gap_ms=interval_ms,
+            post_command_gap_ms=post_command_gap_ms,
+            limit=1,
+            label=label,
+        )
+        log.write(str(batch.get("output_dir", "")) + "\n")
+        log.write(json.dumps({"total": batch.get("total"), "counts": batch.get("counts")}, ensure_ascii=False) + "\n")
+        returncode = int(batch.get("returncode", 0) or 0)
+    summary_path: Optional[Path] = batch.get("summary_path") if isinstance(batch.get("summary_path"), Path) else None
     if summary_path is None:
         roots = list((Path(os.environ.get("POLARIS_BDD_RUN_DIR", "")) / "session" / "artifacts" / "misc" / "fa2").glob(f"*{label}*/fa2_command_batch_summary.json")) if os.environ.get("POLARIS_BDD_RUN_DIR") else []
         if roots:

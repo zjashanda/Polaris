@@ -10,20 +10,19 @@ if __package__ in {None, ""}:
 import argparse
 import csv
 import json
-import subprocess
 import wave
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from tools.audio.polaris_audio_builder import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH, ensure_tts_pcm, read_pcm, silence_pcm
+from tools.core.polaris_adapter_bridge import run_audio_playback_adapter
 from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports, read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, parse_prefixed_timestamp, read_lines_between
 from tools.execution.polaris_case_runner import default_playback_device_key, playback_device_label, sanitize_logs, summarize_window
 from tools.execution.polaris_doc_case_runner import collect_metrics
 
 
-LISTENAI_PLAY_SCRIPT = Path(r"C:\Users\Administrator\.codex\skills\listenai-play\scripts\listenai_play.py")
 DEFAULT_COMMAND_FILE = Path("docs") / "fa2命令词.txt"
 DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
@@ -148,48 +147,21 @@ def build_batch_audio(
 
 def run_playback(audio_file: Path, device_key: str, output_dir: Path, timeout_s: int) -> dict:
     device_key = str(device_key or "").strip()
-    cmd = [
-        sys.executable,
-        str(LISTENAI_PLAY_SCRIPT),
-        "play",
-        "--audio-file",
-        str(audio_file),
-    ]
-    if device_key:
-        cmd.extend(["--device-key", device_key])
     started_at = datetime.now()
     playback_started_at: Optional[datetime] = None
     lines: List[str] = []
-    with (output_dir / "play_combined.log").open("w", encoding="utf-8", newline="") as log:
-        log.write(f"$ {' '.join(cmd)}\n")
-        log.flush()
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(Path(__file__).resolve().parents[2]),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        assert proc.stdout is not None
-        try:
-            for raw in proc.stdout:
-                line = raw.rstrip("\n")
-                lines.append(line)
-                log.write(f"{now_iso()} {line}\n")
-                log.flush()
-                if playback_started_at is None and line.startswith("Play iteration "):
-                    playback_started_at = datetime.now()
-            returncode = proc.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            returncode = proc.wait()
-            lines.append(f"TIMEOUT after {timeout_s}s")
-            log.write(f"{now_iso()} TIMEOUT after {timeout_s}s\n")
+    capture = run_audio_playback_adapter(
+        audio_file,
+        device_key,
+        timeout_s=timeout_s,
+        stream_log_path=output_dir / "play_combined.log",
+    )
+    lines = capture.stdout_lines
+    playback_started_at = capture.playback_started_at
+    returncode = capture.completed.returncode
     finished_at = datetime.now()
     payload = {
-        "cmd": cmd,
+        "cmd": list(capture.completed.args),
         "returncode": returncode,
         "device_key": device_key,
         "playback_device": playback_device_label(device_key),
@@ -198,9 +170,82 @@ def run_playback(audio_file: Path, device_key: str, output_dir: Path, timeout_s:
         "finished_at": finished_at.isoformat(timespec="milliseconds"),
         "stdout_lines": lines,
         "log_path": str(output_dir / "play_combined.log"),
+        "adapter_executor": capture.action_result.to_dict(),
     }
     (output_dir / "playback.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
+
+
+def run_command_batch(
+    *,
+    command_file: Path = DEFAULT_COMMAND_FILE,
+    device_key: str = DEFAULT_DEVICE_KEY,
+    wake_word: str = DEFAULT_WAKE_WORD,
+    wake_gap_ms: int = 900,
+    post_command_gap_ms: int = 6500,
+    window_pad_before_ms: int = 500,
+    window_pad_after_ms: int = 1500,
+    label: str = "fa2_full",
+    limit: int = 0,
+    start_index: int = 1,
+) -> dict:
+    device_key = str(device_key or default_playback_device_key(read_env_config())).strip()
+    session_dir = current_session_dir()
+    commands = read_commands(command_file)
+    if start_index > 1:
+        commands = commands[start_index - 1 :]
+    if limit:
+        commands = commands[:limit]
+    if not commands:
+        raise ValueError("no commands to validate")
+
+    output_dir = new_artifact_dir(f"fa2_command_batch_{label}", session_dir=session_dir)
+    audio_file = output_dir / "audio" / "fa2_wake_before_each_command.wav"
+    manifest = build_batch_audio(
+        commands,
+        audio_file,
+        wake_word=wake_word,
+        wake_gap_ms=wake_gap_ms,
+        post_command_gap_ms=post_command_gap_ms,
+    )
+    timeout_s = max(120, int(manifest["duration_ms"] / 1000) + 600)
+    playback = run_playback(audio_file, device_key, output_dir, timeout_s)
+    playback_started_at = datetime.fromisoformat(str(playback["playback_started_at"]))
+    finished_at = datetime.fromisoformat(str(playback["finished_at"]))
+    full_logs = collect_full_logs(session_dir, playback_started_at - timedelta(seconds=2), finished_at + timedelta(seconds=2), output_dir)
+    rows = analyze_entries(
+        manifest,
+        full_logs,
+        playback_started_at,
+        int(playback["returncode"]),
+        output_dir,
+        window_pad_before_ms,
+        window_pad_after_ms,
+    )
+    metadata = {
+        "generated_at": now_iso(),
+        "session_dir": str(session_dir),
+        "output_dir": str(output_dir),
+        "command_file": str(command_file),
+        "device_key": device_key,
+        "playback_device": playback_device_label(device_key),
+        "audio_file": str(audio_file),
+        "wake_word": wake_word,
+        "playback_returncode": playback["returncode"],
+        "playback_started_at": playback["playback_started_at"],
+        "playback_finished_at": playback["finished_at"],
+        "audio_duration_ms": manifest["duration_ms"],
+        "configured_log_ports": configured_log_ports(),
+    }
+    write_reports(rows, output_dir, metadata)
+    counts = {k: sum(1 for row in rows if row["result"] == k) for k in ("PASS", "FAIL", "BLOCKED")}
+    return {
+        "returncode": 0,
+        "output_dir": output_dir,
+        "summary_path": output_dir / "fa2_command_batch_summary.json",
+        "total": len(rows),
+        "counts": counts,
+    }
 
 
 def filter_lines(lines: List[str], start_dt: datetime, end_dt: datetime) -> List[str]:
@@ -400,57 +445,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    args.device_key = str(args.device_key or default_playback_device_key(read_env_config())).strip()
-    session_dir = current_session_dir()
-    commands = read_commands(args.command_file)
-    if args.start_index > 1:
-        commands = commands[args.start_index - 1 :]
-    if args.limit:
-        commands = commands[: args.limit]
-    if not commands:
-        raise SystemExit("no commands to validate")
-
-    output_dir = new_artifact_dir(f"fa2_command_batch_{args.label}", session_dir=session_dir)
-    audio_file = output_dir / "audio" / "fa2_wake_before_each_command.wav"
-    manifest = build_batch_audio(
-        commands,
-        audio_file,
-        wake_word=args.wake_word,
-        wake_gap_ms=args.wake_gap_ms,
-        post_command_gap_ms=args.post_command_gap_ms,
-    )
-    timeout_s = max(120, int(manifest["duration_ms"] / 1000) + 600)
-    playback = run_playback(audio_file, args.device_key, output_dir, timeout_s)
-    playback_started_at = datetime.fromisoformat(str(playback["playback_started_at"]))
-    finished_at = datetime.fromisoformat(str(playback["finished_at"]))
-    full_logs = collect_full_logs(session_dir, playback_started_at - timedelta(seconds=2), finished_at + timedelta(seconds=2), output_dir)
-    rows = analyze_entries(
-        manifest,
-        full_logs,
-        playback_started_at,
-        int(playback["returncode"]),
-        output_dir,
-        args.window_pad_before_ms,
-        args.window_pad_after_ms,
-    )
-    metadata = {
-        "generated_at": now_iso(),
-        "session_dir": str(session_dir),
-        "output_dir": str(output_dir),
-        "command_file": str(args.command_file),
-        "device_key": args.device_key,
-        "playback_device": playback_device_label(args.device_key),
-        "audio_file": str(audio_file),
-        "wake_word": args.wake_word,
-        "playback_returncode": playback["returncode"],
-        "playback_started_at": playback["playback_started_at"],
-        "playback_finished_at": playback["finished_at"],
-        "audio_duration_ms": manifest["duration_ms"],
-        "configured_log_ports": configured_log_ports(),
-    }
-    write_reports(rows, output_dir, metadata)
-    print(output_dir)
-    print(json.dumps({"total": len(rows), "counts": {k: sum(1 for row in rows if row["result"] == k) for k in ("PASS", "FAIL", "BLOCKED")}}, ensure_ascii=False))
+    try:
+        result = run_command_batch(
+            command_file=args.command_file,
+            device_key=args.device_key,
+            wake_word=args.wake_word,
+            wake_gap_ms=args.wake_gap_ms,
+            post_command_gap_ms=args.post_command_gap_ms,
+            window_pad_before_ms=args.window_pad_before_ms,
+            window_pad_after_ms=args.window_pad_after_ms,
+            label=args.label,
+            limit=args.limit,
+            start_index=args.start_index,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(result["output_dir"])
+    print(json.dumps({"total": result["total"], "counts": result["counts"]}, ensure_ascii=False))
     return 0
 
 

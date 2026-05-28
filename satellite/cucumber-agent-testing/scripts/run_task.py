@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -269,6 +270,7 @@ def run_and_echo(cmd: List[str], *, capture_plan_path: bool = False) -> str:
         errors="replace",
         stdout=subprocess.PIPE if capture_plan_path else None,
         stderr=subprocess.STDOUT if capture_plan_path else None,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     if capture_plan_path:
         output = completed.stdout or ""
@@ -342,9 +344,13 @@ def main() -> int:
     compile_first = resolve_bool(args.compile_first, runner.get("compile_first"))
 
     if online_stress_task:
+        stress_cmd = build_online_stress_command(args, task, str(env_path))
+        if common["mode"] != "execute":
+            print("$ " + quote_cmd(stress_cmd))
+            print(f"result=PLAN_OK mode={common['mode']}")
+            return 0
         if not allow_side_effects:
             raise SystemExit("在线压测会占用串口/声卡/云端，任务或命令行必须设置 allow_side_effects=true。")
-        stress_cmd = build_online_stress_command(args, task, str(env_path))
         if args.print_command:
             print("$ " + quote_cmd(stress_cmd))
             return 0

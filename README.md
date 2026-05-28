@@ -1,4 +1,4 @@
-﻿# Polaris Voice Validation Skill
+# Polaris Voice Validation Skill
 
 Polaris 是一个面向嵌入式语音设备的本地真机验证 skill。当前仓库已经切换到新的 **Cucumber/BDD + Event Runtime** 方案：用 Cucumber 描述测试意图，用固定 runner 执行动作，用 Event Runtime 把串口、声卡、云控和执行产物统一转换成事件，再由确定性的断言逻辑判断 PASS/FAIL/BLOCKED。
 
@@ -31,6 +31,7 @@ Polaris/
     cases/                           # 用例表格资料
     api/                             # 云控/API 相关辅助代码
     intake/                          # 新项目/新功能资料导入入口
+    wiki/                            # 长期 Wiki：测试方法、断言归因、验证包
     knowledge/                       # 学习后的结构化知识沉淀
     skill/                           # 当前 skill 设计、能力、落地说明
   satellite/cucumber-agent-testing/  # Cucumber/BDD + Event Runtime 主体
@@ -98,6 +99,23 @@ notepad polaris.local.json
 | `projects.<项目>.cloud.device_env_command` | 设备切换环境命令，必须发到设备支持的串口。 |
 | `projects.<项目>.cloud.capabilities` | 可选；声明云控权限，例如 `volume_control`、`night_mode`、`wake_word_config`、`wake_threshold`、`multi_wake`。 |
 
+### 4.1.1 首次运行先检查声卡查询命令
+
+多声卡机器需要用稳定声卡 key 填 `common.audio.default_playback_device_key`。Polaris 已自带 `laid` 检查/安装脚本，目录固定在 `tools/audio/laid/`，不要把安装脚本散放到根目录。
+
+```powershell
+# 检查当前电脑是否已经有 laid
+python tools\audio\polaris_laid.py check
+
+# 没有就安装/刷新到当前用户 PowerShell profile；已存在则不重复安装
+python tools\audio\polaris_laid.py ensure
+
+# 查询播放声卡 key，复制 Render 行的 DeviceKey 到 polaris.local.json
+python tools\audio\polaris_laid.py list --direction Render
+```
+
+也可以直接在 PowerShell 中执行 `laid`。如果 `laid` 不存在，执行 `ensure` 后重新打开 PowerShell，或按安装输出提示重新加载 profile。Linux 环境使用同一个 Python 入口，会调用 `tools/audio/laid/install_laid_linux.sh` 写入 `~/.bashrc`/`~/.zshrc`。
+
 ### 4.2 WB01 项目最小配置
 
 `cskwb01` 通常是 AP + CP + ASR/WB01 + 控制口四串口：
@@ -164,6 +182,16 @@ WS63 没有 CP 时，`cp` 必须留空；断言会根据 capability 自动降级
 
 ## 5. 常用执行方式
 
+### 5.0 从需求生成方案/用例确认包
+
+用户只给一句需求时，先用已沉淀的 Wiki/验证包生成可复核的方案、用例矩阵、缺口和执行确认单；这个步骤不碰真机，也不依赖大模型在线生成脚本：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\generate_requirement_package.py --requirement "在线全双工相关功能验证"
+```
+
+默认输出到 `satellite/cucumber-agent-testing/debug/requirement_packages/<时间戳>/`，包含 `test_plan.md`、`case_matrix.md`、`gap_list.md`、`confirmation.md` 和 `requirement_package.json`。
+
 ### 5.1 只打印将要执行的命令
 
 ```powershell
@@ -204,7 +232,25 @@ WS63 示例：
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.ws63.example.json --mode execute --allow-side-effects
 ```
 
-### 5.6 对已有日志做 replay 和断言
+### 5.6 在线全双工验证
+
+在线全双工建议走优化任务入口，让声卡检查、设备 UAT/SIT 环境切换、联网确认、全双工 API 下发、Cucumber 主流程和 Runtime replay 都有独立证据：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode execute --allow-side-effects --manage-session --runtime-strict
+```
+
+先不碰真机时：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode dry-run
+```
+
+详细验证包见 `docs/wiki/voice-validation/packs/online-full-duplex.md`；运行期断言细节见 `docs/knowledge/common/online_full_duplex_validation.md`。
+
+注意：云控 adapter 会把当前任务的 `--env-file` 继续传给 `tools/cloud/polaris_app_control.py`。因此 WB01/WS63 或新项目切换时，API 辅助脚本应读取当前项目的 AP/ASR/upper 串口和 UAT/SIT 环境，不能回退到旧 `config/` 或根目录 active_project。
+
+### 5.7 对已有日志做 replay 和断言
 
 ```powershell
 python satellite\cucumber-agent-testing\scripts\runtime_replay.py --input-dir satellite\cucumber-agent-testing\debug\runs\<某次运行目录> --profile first_wake --env-file polaris.local.json
@@ -245,6 +291,7 @@ EXPECT_DURATION MediaStarted TO MediaCompleted >= 500ms
 `run_optimized_task.py` 是当前按两份 Runtime 优化方案新增的第一层工程化入口。它不会替换 `run_task.py`，而是在外层增加：
 
 - 资源/约束 preflight：串口、声卡、网络、云环境、副作用策略、项目拓扑。
+- execute 模式串口打开探测：如果端口被 Xshell/串口助手/旧 logger 占用，先判 `BLOCKED`，避免误判成固件 FAIL。
 - Adapter Flow 前置/收尾：可在主 Cucumber runner 前后执行 PA、环境切换、联网、音量等固定 flow。
 - 执行前后状态快照：`state/before.json`、`state/after.json`。
 - 状态差异：`state_diff.json`。
@@ -262,6 +309,14 @@ python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task sat
 ```powershell
 python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json --mode dry-run --print-command
 ```
+
+执行完成后，把一次或多次 `optimized_runs` 汇总成用户可读总报告：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\build_validation_summary_report.py --run satellite\cucumber-agent-testing\debug\optimized_runs\<某次optimized_run>
+```
+
+默认输出到 `satellite/cucumber-agent-testing/debug/reports/<时间戳>/validation_summary_report.md`。
 
 真机执行并允许一次失败重试：
 
@@ -500,6 +555,7 @@ scripts/run_adapter_action.py       # adapter registry action -> command plan/ex
 scripts/plan_adapter_flow.py        # high-level setup/execution flow -> adapter action sequence
 scripts/build_analytics_trend.py    # execution_record history -> local trend report
 docs/skill/runtime-implementation-matrix.md
+tools/audio/polaris_laid.py         # 检查/安装 laid，并查询 ListenAI 声卡稳定 key
 ```
 
 常见前置/调试流程可以先通过 Adapter Flow dry-run，确认串口、声卡、云控和网络动作会走哪个底层工具：
@@ -546,7 +602,31 @@ runtime/
 
 后续新功能不要直接塞进一个巨大的 runtime 文件里，优先按领域进入 plugin：wake、asr、media、network、reboot，必要时再新增 plugin。
 
-## 11. 新项目/新功能怎么导入学习
+## 11. Wiki 知识库怎么用
+
+`docs/wiki/` 是当前新逻辑的长期知识库，用来承接旧 `voice-test-plan-designer` 和后续新项目/新功能资料。后续我生成测试方案和用例时，应优先查这里，而不是每次从零调试。
+
+常用入口：
+
+- `docs/wiki/voice-validation/test-item-index.md`：语音测试项总表、当前能力等级、已有 tag/task 和缺口。
+- `docs/wiki/voice-validation/wakeup.md`：首次唤醒、识别模式唤醒、打断唤醒、响应时间等方法。
+- `docs/wiki/voice-validation/command.md`：命令词识别、反集/集外、one-shot、打断、自激等方法。
+- `docs/wiki/voice-validation/online-recognition.md`：半双工、全双工、在线 VAD、弱网和云端稳定性。
+- `docs/wiki/voice-validation/assertion-attribution.md`：PASS/FAIL/BLOCKED/TIMING_AMBIGUOUS/需求复核归因规则。
+- `docs/wiki/voice-validation/packs/`：可复用功能验证包，当前包含首次唤醒、识别模式唤醒、半双工、在线全双工、基础命令词、在线混合压测和误唤醒。
+- `docs/wiki/voice-validation/new-project-feature-intake.md`：新项目/新功能资料如何从 intake 沉淀成 Wiki、knowledge 和可执行 runtime。
+- `docs/wiki/voice-validation/failure-feedback.md`：压测/真机异常如何反哺新用例、断言、Event Graph rule 和 coverage 阈值。
+- `docs/wiki/voice-validation/project-rule-overlays.md`：WB01/WS63/新项目私有 marker、Event Graph overlay 和 coverage 阈值沉淀规则。
+
+在线全双工完整矩阵不仅有 smoke，还提供 FD-002~FD-012 的 task/scene：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_kernel_scene.py --scene satellite\cucumber-agent-testing\references\scenes\online_full_duplex_fd002_fd012.scene.example.json --mode dry-run --execute-runner --emit-ir-bundle
+```
+
+新项目/新功能的沉淀规则：原始资料放 `docs/intake/`，学习后的长期方法补到 `docs/wiki/`，项目差异补到 `docs/knowledge/<project_id>/`，能执行的内容再进入 Cucumber/Adapter/Runtime。
+
+## 12. 新项目/新功能怎么导入学习
 
 如果后续有新项目说明、新功能需求、外部测试方案、类似 `voice-test-plan-designer` 的资料，统一放到：
 
@@ -561,12 +641,12 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 1. 从 `docs/intake/templates/learning_manifest.template.json` 复制 `learning_manifest.json`。
 2. 把原始资料放入 `raw/`，例如 PDF、Excel、Markdown、日志、旧 skill。
 3. 在 manifest 里写清楚本次目标：项目 profile、功能测试策略、Cucumber 用例、断言逻辑、压测策略或缺口分析。
-4. 我学习后会把结构化理解沉淀到 `docs/knowledge/<project_id>/`。
+4. 我学习后会把通用测试方法沉淀到 `docs/wiki/`，把项目差异沉淀到 `docs/knowledge/<project_id>/`。
 5. 资料足够时，再把可执行能力写入 `features/`、`references/`、`tasks/`、`runtime/plugins/` 或 `tools/`。
 
 资料不足时，只输出缺口清单，不伪造可执行能力。
 
-## 12. 哪些文件不要提交
+## 13. 哪些文件不要提交
 
 这些只属于本机或运行产物：
 
@@ -589,7 +669,7 @@ __pycache__/
 ### 声卡播放不生效怎么办
 
 - 如果项目/设备配置里没有填写声卡 key，默认使用电脑默认声卡。
-- 多声卡环境建议用 `laid` 或 `listenai-play` 扫描稳定 key 后填入 `common.audio.default_playback_device_key`。
+- 多声卡环境先执行 `python tools\audio\polaris_laid.py ensure`，再用 `python tools\audio\polaris_laid.py list --direction Render` 查询稳定 key，填入 `common.audio.default_playback_device_key`。
 - 如果声卡播放成功但设备无唤醒证据，WB01/WS63 可尝试在控制口执行：`uut-pa.on`、`pa-enable.set 0 17 0 1`。
 
 ### 云控/API 设置不生效怎么办
@@ -609,3 +689,56 @@ Cucumber 是自然语言入口，但真正执行要靠固定的 step/action/asse
 ### 老方案还能用吗
 
 旧方案已归档到 `oldTime/`，只作为历史参考，不作为当前执行入口。当前维护和新增能力都应进入新方案目录。
+
+## 当前新增落地能力索引（2026-05-27）
+
+### L1 标准 task/scene
+
+以下能力已经补成标准 task example，可用 `run_optimized_task.py` 或 `run_kernel_scene.py` 触发。默认 `dry-run` 不占用真机；真机执行必须显式增加 `--allow-side-effects --manage-session --runtime-strict`。
+
+- `recognition_mode_wake.example.json`：识别模式下唤醒。
+- `half_duplex.example.json`：半双工识别。
+- `wake_interrupt.example.json` / `command_interrupt.example.json`：自播中唤醒/命令打断。
+- `network_recovery_basic.example.json`：联网恢复基础验证。
+- `offline_oneshot_matrix.example.json` / `online_oneshot_matrix.example.json`：one-shot 间隔矩阵。
+- `wake_latency.example.json` / `continuous_wake.example.json` / `random_interval_wake.example.json`：唤醒耗时、连续唤醒、随机间隔唤醒。
+- `false_wake_quiet.example.json` / `false_wake_human_speech.example.json` / `false_wake_white_noise.example.json`：误唤醒基础 smoke。
+- `attribution_validator.example.json`：归因一致性复核。
+- 聚合 scene：`satellite/cucumber-agent-testing/references/scenes/l1_voice_core_supported_smoke.scene.example.json`。
+
+### 需求、失败、媒体和报告闭环
+
+- 需求转方案/用例/确认单：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\generate_requirement_package.py --requirement "在线全双工相关功能验证" --project cskwb01 --env-file polaris.local.json
+```
+
+- 失败 run 反哺候选用例：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\generate_failure_case.py --run satellite\cucumber-agent-testing\debug\optimized_runs\<run>
+```
+
+- 媒体/TTS/MP3 日志级响应 oracle：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\analyze_media_response_oracle.py --run satellite\cucumber-agent-testing\debug\runs\<run>
+```
+
+- 多 run 总报告：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\build_validation_summary_report.py --run <run_or_optimized_dir> --run <another_run>
+```
+
+媒体 oracle v1 只能证明日志/事件层面的云端 TTS、播放器启动、完成和错误 marker；未配置 `loopback_device_key` 或 `capture_device_key` 时，不声称真实声学出声和音质通过。
+
+## 2026-05-28 真机闭环补充
+
+- 前置 Adapter 现在支持“无 managed session 直接执行”：`serial.ap.set_device_env` 会按当前 `--env-file` 渲染 AP 串口和波特率，直接写串口时使用 `--no-sync-config`，避免把 WS63/WB01 端口串到根本地配置。
+- 云控 Adapter 必须传 `--env-file`，并且会校验 HTTP 200 之外的业务码；例如返回 `code=501` 的“设备未上线”会判为 `BLOCKED`，不会误判为设置成功。
+- Cucumber 执行进程会注入 `POLARIS_ENV_FILE`，doc case / network helper 会按当前项目配置读取 UAT/SIT、串口、声卡和设备信息，不再依赖根 `active_project`。
+- `run_kernel_scene.py` 支持 `--retry-blocked`，长链路节点遇到声卡/语音链路瞬态 `BLOCKED` 时可配合 `--max-retries` 自动复跑。
+- 在线全双工 Runtime 断言已区分 setup/recovery 阶段和主流程：联网恢复阶段重启不直接计入固件失败；Wake->Command 断言要求存在有效事件对，避免 setup 噪声导致误判。
+- 媒体/TTS Oracle v1 已过滤 PA 正常关闭超时日志，并继续明确限制：未配置 loopback/capture 时只证明日志级响应，不声称真实声学出声。

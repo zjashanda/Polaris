@@ -58,6 +58,46 @@ def _fail(name: str, reason: str, **actual: Any) -> ConstraintResult:
     return ConstraintResult(name=name, result="FAIL", reason=reason, severity="error", actual=actual)
 
 
+def _probe_serial_availability(ports: Dict[str, Any], *, baudrate: str, control_baudrate: str) -> ConstraintResult:
+    """Open configured serial ports briefly so execute mode fails as BLOCKED, not firmware FAIL."""
+    try:
+        import serial  # type: ignore
+    except Exception as exc:  # pragma: no cover - depends on host packages
+        return _warn("serial_open_probe", "无法导入 pyserial，跳过串口占用预检。", error=repr(exc))
+
+    role_ports: List[tuple[str, str, str]] = []
+    for role in ("ap", "cp", "asr", "upper", "control"):
+        port = _text(ports.get(role))
+        if not port:
+            continue
+        selected_baud = control_baudrate if role == "control" else baudrate
+        role_ports.append((role, port, selected_baud))
+
+    seen: set[str] = set()
+    checked: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
+    for role, port, selected_baud in role_ports:
+        key = port.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            ser = serial.Serial(port, int(selected_baud or "115200"), timeout=0.2)
+            ser.close()
+            checked.append({"role": role, "port": port, "baudrate": int(selected_baud or "115200"), "result": "OPEN_OK"})
+        except Exception as exc:
+            failures.append({"role": role, "port": port, "baudrate": selected_baud, "error": repr(exc)})
+
+    if failures:
+        return _blocked(
+            "serial_open_probe",
+            "execute 前发现串口不可打开，通常是端口被 Xshell/串口助手/旧 logger 占用；本轮应判 BLOCKED，不能归因为固件功能失败。",
+            checked=checked,
+            failures=failures,
+        )
+    return _pass("serial_open_probe", "execute 前串口可打开，未发现端口占用。", checked=checked)
+
+
 def is_online_task(task: Dict[str, Any], tag: str = "") -> bool:
     schema = _text(task.get("schema")).lower()
     runner = task.get("runner", {}) if isinstance(task.get("runner"), dict) else {}
@@ -110,6 +150,8 @@ def evaluate_constraints(
 
     ports = _nested(env_payload, "serial", "ports")
     ports = ports if isinstance(ports, dict) else {}
+    baudrate = _text(_nested(env_payload, "serial", "baudrate") or env_payload.get("baudrate") or "115200")
+    control_baudrate = _text(_nested(env_payload, "serial", "control_baudrate") or baudrate)
     project_type = _text(env_payload.get("project_type")).lower()
     missing: List[str] = []
     if project_type in {"wb01", "cskwb01"}:
@@ -125,6 +167,9 @@ def evaluate_constraints(
         results.append(_blocked("serial_topology", "串口拓扑缺少必需端口。", missing=missing, ports=ports, project_type=project_type))
     else:
         results.append(_pass("serial_topology", "串口拓扑满足当前项目最小要求。", ports=ports, project_type=project_type))
+
+    if mode == "execute" and allow_side_effects and not missing:
+        results.append(_probe_serial_availability(ports, baudrate=baudrate, control_baudrate=control_baudrate))
 
     if resource_snapshot.conflicts:
         results.append(_blocked("resource_conflicts", "资源存在独占冲突。", conflicts=[item.to_dict() for item in resource_snapshot.conflicts]))

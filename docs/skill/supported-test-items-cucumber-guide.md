@@ -78,15 +78,15 @@ satellite/cucumber-agent-testing/debug/runs/<时间戳>_<模式>/
 处理一个新需求、新表格或新测试项时，按这个顺序读：
 
 1. `polaris.local.json`：当前项目、串口、声卡、Wi-Fi、云环境、唤醒词。
-2. `satellite/voice-test-plan-designer/SKILL.md`：测试方案设计器的使用规则。
-3. `satellite/voice-test-plan-designer/references/测试项配置.json`：测试项大类、名称、必填字段。
-4. `satellite/voice-test-plan-designer/references/执行方法模板.md`：每个测试项的执行规则、关注结果、统计公式。
-5. `satellite/voice-test-plan-designer/references/测试数据设计模板.md`：语料、音频、样本量、标注要求。
-6. `references/modular-validation-workflow.md`：把需求拆成可执行验证模块的流程。
-7. `references/evidence-rules.md`：PASS/FAIL/BLOCKED/需求问题/固件问题的总规则。
-8. `references/validation-pool/INDEX.md` 和命中的模块，例如 `wake-session.md`、`duplex-mode.md`、`network-online.md`。
-9. `satellite/cucumber-agent-testing/features/polaris_voice_core.feature` 与 `references/*registry*.json`：确认当前是否已能跑。
-10. `satellite/cucumber-agent-testing/tasks/examples/`：复制任务配置作为入口。
+2. `docs/wiki/voice-validation/test-item-index.md`：测试项大类、当前能力等级、已有 tag/task 和缺口。
+3. `docs/wiki/voice-validation/assertion-attribution.md`：PASS/FAIL/BLOCKED/需求问题/固件问题的总规则。
+4. `docs/wiki/voice-validation/packs/`：命中已有验证包时优先复用，当前已有首次唤醒、识别模式唤醒、半双工、在线全双工、基础命令词、在线混合压测和误唤醒。
+5. 对应专题 Wiki：`wakeup.md`、`command.md`、`free-speech.md`、`online-recognition.md`、`false-wake.md`。
+6. `docs/wiki/voice-validation/test-data-design.md`：语料、音频、样本量、标注和间隔要求。
+7. `docs/knowledge/<project_id>/`：读取当前项目差异、私有 marker、配置入口和历史缺口。
+8. `satellite/cucumber-agent-testing/features/polaris_voice_core.feature` 与 `references/*registry*.json`：确认当前是否已能跑。
+9. `satellite/cucumber-agent-testing/tasks/examples/`：复制任务配置作为入口。
+10. 如需追溯旧资料，再查看 `oldTime/legacy_20260526_144646/satellite/voice-test-plan-designer`；不要把 oldTime 作为当前执行入口。
 
 ### 2.2 每个测试项要拆成什么
 
@@ -210,7 +210,7 @@ API/云控类用例必须确认设备端环境：
 
 ## 5. 已有知识库支持、可继续沉淀的测试项
 
-这些测试项来自 `voice-test-plan-designer` 和 `extended_test_item_sedimentation.md`。部分已有 Cucumber tag，部分已有 contract/验证池但还需补资料或环境。
+这些测试项已从旧 `voice-test-plan-designer` 沉淀到 `docs/wiki/voice-validation/`。部分已有 Cucumber tag，部分已有 contract/验证池但还需补资料或环境。
 
 等级说明：
 

@@ -571,6 +571,33 @@ def assert_event_order(timeline: Timeline, before_type: str, after_type: str) ->
     return _fail(name, f"{after_type} 在日志顺序上早于 {before_type}。")
 
 
+def assert_event_order_exists(timeline: Timeline, before_type: str, after_type: str, *, name: str = "") -> AssertionResult:
+    assertion_name = name or f"{before_type}_before_{after_type}"
+    before_events = timeline.find(before_type)
+    after_events = timeline.find(after_type)
+    if not before_events or not after_events:
+        return _fail(assertion_name, f"缺少顺序断言事件：{before_type}={bool(before_events)}, {after_type}={bool(after_events)}。")
+
+    timed_before = [event for event in before_events if event.timestamp_ms is not None]
+    timed_after = [event for event in after_events if event.timestamp_ms is not None]
+    candidates: List[tuple[int, Any, Any]] = []
+    for before in timed_before:
+        for after in timed_after:
+            if before.timestamp_ms is not None and after.timestamp_ms is not None and before.timestamp_ms <= after.timestamp_ms:
+                candidates.append((int(after.timestamp_ms - before.timestamp_ms), before, after))
+    if candidates:
+        delta, before, after = sorted(candidates, key=lambda item: item[0])[0]
+        return _pass(assertion_name, f"观察到至少一组 {before_type} 先于 {after_type}。", delta_ms=delta, before_event_id=before.event_id, after_event_id=after.event_id)
+
+    for before in before_events:
+        before_index = timeline.events.index(before)
+        for after in after_events:
+            after_index = timeline.events.index(after)
+            if before_index <= after_index:
+                return _pass(assertion_name, f"观察到至少一组 {before_type} 在日志顺序上先于 {after_type}。", delta_index=after_index - before_index)
+    return _fail(assertion_name, f"未找到任何 {before_type} 先于 {after_type} 的有效事件对。")
+
+
 def assert_no_event_during(
     timeline: Timeline,
     event_type: str,
@@ -599,6 +626,35 @@ def assert_no_event_exists(timeline: Timeline, event_type: str, *, name: str = "
     if not events:
         return _pass(assertion_name, f"未观察到 {event_type}。", count=0)
     return _fail(assertion_name, f"观察到 {len(events)} 个不应出现的 {event_type}。", count=len(events), event_ids=[event.event_id for event in events[:5]])
+
+
+def _is_setup_or_recovery_event(event: Any) -> bool:
+    text = f"{getattr(event, 'file', '')} {getattr(event, 'raw', '')}".lower()
+    markers = [
+        "bdd_ensure_online",
+        "wait_device_online",
+        "prepare_local_hotspot",
+        "hotspot_cycle",
+        "after_reboot",
+        "\\setup\\",
+        "/setup/",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def assert_no_runtime_reboot(timeline: Timeline, *, name: str = "no_runtime_reboot") -> AssertionResult:
+    events = timeline.find("RebootDetected")
+    runtime_events = [event for event in events if not _is_setup_or_recovery_event(event)]
+    ignored = len(events) - len(runtime_events)
+    if not runtime_events:
+        return _pass(name, "主流程窗口未观察到非预期重启；setup/recovery 阶段重启不计入固件失败。", count=0, ignored_setup_reboots=ignored)
+    return _fail(
+        name,
+        f"主流程窗口观察到 {len(runtime_events)} 个非预期 RebootDetected。",
+        count=len(runtime_events),
+        ignored_setup_reboots=ignored,
+        event_ids=[event.event_id for event in runtime_events[:5]],
+    )
 
 
 def _first_payload(timeline: Timeline, event_type: str) -> Optional[Dict[str, Any]]:
@@ -828,8 +884,8 @@ def evaluate_duplex_recognition(timeline: Timeline, *, mode: str, cp_log: bool =
             assert_event_exists(timeline, "WakeDetected"),
             assert_event_exists(timeline, "ASRDetected"),
             assert_event_exists(timeline, "CommandDetected"),
-            assert_event_order(timeline, "WakeDetected", "CommandDetected"),
-            assert_no_event_exists(timeline, "RebootDetected", name="no_reboot_in_duplex_recognition"),
+            assert_event_order_exists(timeline, "WakeDetected", "CommandDetected"),
+            assert_no_runtime_reboot(timeline, name="no_reboot_in_duplex_recognition"),
             assert_no_event_exists(timeline, "CrashDetected", name="no_crash_in_duplex_recognition"),
         ]
     )

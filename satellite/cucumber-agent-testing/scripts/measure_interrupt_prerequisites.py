@@ -14,7 +14,6 @@ import csv
 import json
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -32,6 +31,7 @@ if str(WORKSPACE_ROOT) not in sys.path:
 
 try:
     from tools.core.polaris_runtime import parse_prefixed_timestamp
+    from tools.validation.polaris_fa2_command_batch import run_command_batch
 except Exception:  # pragma: no cover - fallback for offline parsing outside repo.
     def parse_prefixed_timestamp(line: str) -> Optional[datetime]:  # type: ignore[no-redef]
         match = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)", line)
@@ -41,6 +41,7 @@ except Exception:  # pragma: no cover - fallback for offline parsing outside rep
             return datetime.fromisoformat(match.group(1))
         except ValueError:
             return None
+    run_command_batch = None  # type: ignore[assignment]
 
 
 URL_RE = re.compile(r"https?://[^\"\\\s}]+", re.I)
@@ -220,53 +221,28 @@ def run_fa2_batch(
     post_command_gap_ms: int,
     wake_gap_ms: int,
 ) -> Tuple[int, str, Optional[Path]]:
-    cmd = [
-        sys.executable,
-        "tools/validation/polaris_fa2_command_batch.py",
-        "--command-file",
-        str(command_file),
-        "--wake-word",
-        wake_word,
-        "--device-key",
-        device_key,
-        "--wake-gap-ms",
-        str(wake_gap_ms),
-        "--post-command-gap-ms",
-        str(post_command_gap_ms),
-        "--label",
-        label,
-    ]
     log_path = output_dir / "run_fa2_batch.log"
-    lines: List[str] = []
     with log_path.open("w", encoding="utf-8", newline="") as log:
-        log.write(f"$ {quote_cmd(cmd)}\n")
-        log.flush()
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(WORKSPACE_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=os.environ.copy(),
+        log.write(
+            "adapter-only fa2 batch: "
+            f"label={label} wake_gap_ms={wake_gap_ms} post_command_gap_ms={post_command_gap_ms}\n"
         )
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.rstrip("\n")
-            lines.append(line)
-            log.write(line + "\n")
-            log.flush()
-        returncode = proc.wait()
+        log.flush()
+        if run_command_batch is None:
+            raise RuntimeError("run_command_batch is unavailable outside the Polaris repository")
+        batch = run_command_batch(
+            command_file=command_file,
+            device_key=device_key,
+            wake_word=wake_word,
+            label=label,
+            post_command_gap_ms=post_command_gap_ms,
+            wake_gap_ms=wake_gap_ms,
+        )
+        log.write(str(batch.get("output_dir", "")) + "\n")
+        log.write(json.dumps({"total": batch.get("total"), "counts": batch.get("counts")}, ensure_ascii=False) + "\n")
+        returncode = int(batch.get("returncode", 0) or 0)
 
-    batch_dir: Optional[Path] = None
-    for line in lines:
-        maybe = Path(line.strip())
-        if not maybe.is_absolute():
-            maybe = WORKSPACE_ROOT / maybe
-        if (maybe / "fa2_command_batch_summary.json").exists():
-            batch_dir = maybe
-            break
+    batch_dir: Optional[Path] = batch.get("output_dir") if isinstance(batch.get("output_dir"), Path) else None
     if batch_dir is None:
         batch_dir = latest_fa2_dir_from_session(label)
     return returncode, rel(log_path), batch_dir

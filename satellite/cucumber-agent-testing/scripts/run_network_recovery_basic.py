@@ -13,15 +13,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
 BASE = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.core.polaris_adapter_bridge import action_result_to_step, run_adapter_action_capture  # noqa: E402
+from tools.validation.polaris_fa2_command_batch import run_command_batch  # noqa: E402
+
+
 DEFAULT_DEVICE_KEY = ""
 DEFAULT_WAKE_WORD = "小美小美"
 DEFAULT_QUERY = "今天天气怎么样"
@@ -62,45 +67,21 @@ def quote_cmd(cmd: List[str]) -> str:
     return " ".join(quoted)
 
 
-def run_step(name: str, cmd: List[str], output_dir: Path, timeout_s: int) -> Dict[str, Any]:
+def run_step(name: str, adapter_id: str, action: str, params: Dict[str, Any], output_dir: Path, timeout_s: int) -> Dict[str, Any]:
     log_path = output_dir / f"{name}.log"
     started_at = datetime.now()
-    lines: List[str] = []
-    with log_path.open("w", encoding="utf-8", newline="") as log:
-        log.write(f"$ {quote_cmd(cmd)}\n")
-        log.flush()
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(WORKSPACE_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=os.environ.copy(),
-        )
-        assert proc.stdout is not None
-        try:
-            for raw in proc.stdout:
-                line = raw.rstrip("\n")
-                lines.append(line)
-                log.write(line + "\n")
-                log.flush()
-            returncode = proc.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            returncode = proc.wait()
-            lines.append(f"TIMEOUT after {timeout_s}s")
-            log.write(f"TIMEOUT after {timeout_s}s\n")
-    return {
-        "name": name,
-        "cmd": cmd,
-        "returncode": returncode,
-        "started_at": started_at.isoformat(timespec="seconds"),
-        "finished_at": datetime.now().isoformat(timespec="seconds"),
-        "log_path": rel(log_path),
-        "stdout_tail": lines[-20:],
-    }
+    result = run_adapter_action_capture(
+        adapter_id=adapter_id,
+        action=action,
+        params=params,
+        timeout_s=timeout_s,
+        execute=True,
+        allow_side_effects=True,
+        log_path=log_path,
+    )
+    step = action_result_to_step(name, result, started_at)
+    step["log_path"] = rel(log_path)
+    return step
 
 
 def find_latest_fa2(output_dir: Path) -> Optional[Path]:
@@ -275,17 +256,9 @@ def main() -> int:
     steps.append(
         run_step(
             "01_hotspot_cycle",
-            [
-                sys.executable,
-                "tools/device/polaris_network_orchestrator.py",
-                "hotspot-cycle",
-                "--off-wait",
-                str(args.off_wait),
-                "--on-wait",
-                str(args.on_wait),
-                "--output-dir",
-                str(cycle_dir),
-            ],
+            "network.local",
+            "hotspot_cycle_window",
+            {"off_wait": str(args.off_wait), "on_wait": str(args.on_wait), "output_dir": str(cycle_dir)},
             output_dir,
             timeout_s=int(args.off_wait + args.on_wait + 60),
         )
@@ -293,55 +266,46 @@ def main() -> int:
     steps.append(
         run_step(
             "02_ensure_online",
-            [
-                sys.executable,
-                "tools/device/polaris_network_orchestrator.py",
-                "ensure-online",
-                "--ssid",
-                args.ssid,
-                "--pwd",
-                args.pwd,
-                "--verify-wait",
-                str(args.verify_wait),
-                "--label",
-                "bdd_network_recovery_ensure_online",
-                "--output-dir",
-                str(ensure_dir),
-            ],
+            "network.local",
+            "ensure_online_window",
+            {
+                "ssid": args.ssid,
+                "pwd": args.pwd,
+                "verify_wait": str(args.verify_wait),
+                "label": "bdd_network_recovery_ensure_online",
+                "output_dir": str(ensure_dir),
+            },
             output_dir,
             timeout_s=160,
         )
     )
     query_file = output_dir / "online_query.txt"
     query_file.write_text(args.query.strip() + "\n", encoding="utf-8")
+    query_started = datetime.now()
+    fa2_batch = run_command_batch(
+        command_file=query_file,
+        wake_word=args.wake_word,
+        device_key=args.device_key,
+        limit=1,
+        post_command_gap_ms=9000,
+        label="bdd_network_recovery_query",
+    )
     steps.append(
-        run_step(
-            "03_online_query_smoke",
-            [
-                sys.executable,
-                "tools/validation/polaris_fa2_command_batch.py",
-                "--command-file",
-                str(query_file),
-                "--wake-word",
-                args.wake_word,
-                "--device-key",
-                args.device_key,
-                "--limit",
-                "1",
-                "--post-command-gap-ms",
-                "9000",
-                "--label",
-                "bdd_network_recovery_query",
-            ],
-            output_dir,
-            timeout_s=180,
-        )
+        {
+            "name": "03_online_query_smoke",
+            "cmd": ["adapter-only", "fa2_command_batch"],
+            "returncode": int(fa2_batch.get("returncode", 0) or 0),
+            "started_at": query_started.isoformat(timespec="seconds"),
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "log_path": "",
+            "stdout_tail": [str(fa2_batch.get("output_dir", ""))],
+        }
     )
     payload = summarize(
         output_dir,
         cycle_dir=cycle_dir,
         ensure_dir=ensure_dir,
-        fa2_summary_path=find_latest_fa2(output_dir),
+        fa2_summary_path=fa2_batch.get("summary_path") if isinstance(fa2_batch.get("summary_path"), Path) else find_latest_fa2(output_dir),
         steps=steps,
     )
     print(output_dir)

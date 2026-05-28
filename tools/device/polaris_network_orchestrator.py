@@ -9,6 +9,7 @@ if __package__ in {None, ""}:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -16,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from tools.core.polaris_config import normalize_env_payload, read_env_config, read_json
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, queue_command, read_lines_between
 
 
@@ -51,6 +53,16 @@ TETHERING_RESULT_TYPE = "[Windows.Networking.NetworkOperators.NetworkOperatorTet
 
 def now_iso_ms() -> str:
     return datetime.now().isoformat(timespec="milliseconds")
+
+
+def current_runtime_env_config() -> Dict[str, Any]:
+    env_file = os.environ.get("POLARIS_ENV_FILE", "").strip()
+    if env_file:
+        path = Path(env_file)
+        if not path.is_absolute():
+            path = ROOT / path
+        return normalize_env_payload(read_json(path))
+    return read_env_config()
 
 
 def run_powershell(script: str) -> Dict[str, Any]:
@@ -248,6 +260,14 @@ def action_hotspot_status(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def action_hotspot_set(args: argparse.Namespace) -> None:
+    enable = str(args.enable).strip().lower() in {"1", "true", "on", "yes", "enable", "enabled"}
+    payload = hotspot_set(enable)
+    if args.output:
+        write_json(Path(args.output), payload)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def action_hotspot_cycle(args: argparse.Namespace) -> None:
     session_dir = current_session_dir()
     artifact_dir = Path(args.output_dir) if args.output_dir else new_artifact_dir("hotspot_cycle", session_dir)
@@ -321,7 +341,7 @@ def action_ensure_online(args: argparse.Namespace) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     env_path = ROOT / "config" / "polaris_env.json"
-    env = json.loads(env_path.read_text(encoding="utf-8")) if env_path.exists() else {}
+    env = current_runtime_env_config() or (json.loads(env_path.read_text(encoding="utf-8")) if env_path.exists() else {})
     device_mac = str(args.device_mac or env.get("current_deviceinfo", {}).get("mac", "")).strip()
     ssid = str(args.ssid or env.get("current_connected_ssid", "") or "pcwifi24")
     pwd = str(args.pwd or "12345678")
@@ -345,7 +365,7 @@ def action_ensure_online(args: argparse.Namespace) -> None:
             }
         )
 
-    need_reboot = args.force_reboot or not hotspot_has_device(status, device_mac)
+    need_reboot = args.force_reboot or (bool(device_mac) and not hotspot_has_device(status, device_mac))
     reboot_window: Optional[Dict[str, Any]] = None
     if need_reboot:
         commands = [
@@ -409,6 +429,11 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("hotspot-status", help="print current Windows mobile hotspot status")
     status.add_argument("--output", default=None)
     status.set_defaults(handler=action_hotspot_status)
+
+    set_hotspot = sub.add_parser("hotspot-set", help="turn Windows mobile hotspot on/off")
+    set_hotspot.add_argument("--enable", required=True)
+    set_hotspot.add_argument("--output", default=None)
+    set_hotspot.set_defaults(handler=action_hotspot_set)
 
     hotspot_cycle = sub.add_parser("hotspot-cycle", help="turn hotspot off and on while collecting serial evidence")
     hotspot_cycle.add_argument("--off-wait", type=float, default=35.0)

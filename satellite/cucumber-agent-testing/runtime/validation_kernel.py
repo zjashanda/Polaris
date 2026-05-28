@@ -10,6 +10,7 @@ execution to the existing run_optimized_task.py without replacing it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -156,6 +157,7 @@ class ValidationKernel:
         manage_session: bool = False,
         runtime_strict: bool = False,
         max_retries: int = 0,
+        retry_blocked: bool = False,
         command_text: str = "",
         observe_ms: str = "",
     ) -> KernelRecord:
@@ -192,6 +194,7 @@ class ValidationKernel:
                 manage_session=manage_session,
                 runtime_strict=runtime_strict,
                 max_retries=max_retries,
+                retry_blocked=retry_blocked,
                 command_text=command_text,
                 observe_ms=observe_ms,
             )
@@ -252,6 +255,7 @@ class ValidationKernel:
         manage_session: bool,
         runtime_strict: bool,
         max_retries: int,
+        retry_blocked: bool = False,
         command_text: str = "",
         observe_ms: str = "",
     ) -> Dict[str, Any]:
@@ -282,6 +286,8 @@ class ValidationKernel:
             cmd.append("--manage-session")
         if runtime_strict:
             cmd.append("--runtime-strict")
+        if retry_blocked:
+            cmd.append("--retry-blocked")
         write_json(self.out_dir / "runner_command.json", {"cmd": cmd, "cmdline": _quote_cmd(cmd)})
         completed = subprocess.run(
             cmd,
@@ -291,6 +297,7 @@ class ValidationKernel:
             errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
         stdout = completed.stdout or ""
         (self.out_dir / "runner_stdout.log").write_text(stdout, encoding="utf-8")
@@ -339,7 +346,8 @@ class ValidationKernel:
             analysis_dir.mkdir(parents=True, exist_ok=True)
 
             timeline = _timeline_from_payload(package)
-            graph = build_event_graph(timeline, rule_overlay=self._default_event_graph_rules())
+            package_project = str(metadata.get("project", "") or project_id or "")
+            graph = build_event_graph(timeline, rule_overlay=self._default_event_graph_rules(), project_id=package_project)
             write_json(analysis_dir / "event_graph.json", graph.to_dict())
             (analysis_dir / "event_graph_report.md").write_text(render_event_graph_markdown(graph), encoding="utf-8")
 
@@ -357,7 +365,6 @@ class ValidationKernel:
             }
             write_json(analysis_dir / "state_assertions.json", state_assertions)
             policy_payload = self._default_state_policy_payload()
-            package_project = str(metadata.get("project", "") or project_id or "")
             coverage_policy = evaluate_state_coverage_policy(state, profile, policy_payload, project_id=package_project) if state else {
                 "schema": "polaris.state_coverage_policy_result.v1",
                 "profile": profile,

@@ -43,6 +43,8 @@
 | Adapter Execute Interface MVP | adapter action 渲染命令，默认 dry-run；覆盖控制口 PA/上下电、AP 环境切换、声卡播放、热点状态/恢复、常用云控 API 设置；真执行副作用必须显式 `--execute --allow-side-effects` | `runtime/adapter_executor.py`, `runtime/device_adapter.py`, `scripts/run_adapter_action.py` |
 | Adapter Flow Map MVP | 常见前置/调试流程映射到 adapter action 序列，默认 dry-run 渲染命令 | `references/adapter_flow_map.json`, `scripts/plan_adapter_flow.py` |
 | Optimized Task Adapter Flow Bridge | `run_optimized_task.py` 支持 `execution.adapter_flows.pre/post`，把前置/收尾动作纳入 execution_record | `scripts/run_optimized_task.py` |
+| 在线全双工任务沉淀 | `online_full_duplex.example.json` 串联 laid 检查、设备 UAT/SIT 环境切换、联网确认、全双工 API 和 `@full_duplex_recognition` runtime 断言；FD-002~FD-012 已拆成连续对话、媒体打断、超时边界、异常矩阵和随机稳定性 task/scene | `tasks/examples/online_full_duplex*.example.json`, `references/scenes/online_full_duplex_fd002_fd012.scene.example.json`, `docs/wiki/voice-validation/packs/online-full-duplex.md` |
+| Adapter-only Long Runner Bridge | 历史长流程 runner 不再直接调用声卡/串口/控制口/网络 helper；统一经 `polaris_adapter_bridge.py` -> Adapter Executor 执行，并用 `audit_adapter_only.py` 防回退 | `tools/core/polaris_adapter_bridge.py`, `scripts/audit_adapter_only.py`, `scripts/run_online_mixed_stress.py`, `tools/validation/polaris_fa2_command_batch.py` |
 | Validation Kernel Lifecycle MVP | compile_ir、preflight、adapter/capability/resource/constraint 快照、可选 run_optimized_task、kernel_record/lifecycle；真机 replay 存在时自动生成 event graph、state assertions、Replay VM-lite snapshot | `runtime/validation_kernel.py`, `scripts/run_validation_kernel.py` |
 | Kernel Scene Scheduler MVP | scene 每个节点走独立 Kernel 生命周期，输出 scene 级记录和节点级 kernel_record | `scripts/run_kernel_scene.py` |
 | 默认状态断言策略 | 按 runtime profile 自动追加 WakeDetected、ASR/Command、媒体响应、禁止 Crash/Reboot/误唤醒等兜底断言 | `references/optimization/state_assertion_policy.json` |
@@ -51,11 +53,11 @@
 
 | 方案项 | 当前状态 | 后续差距 |
 |---|---|---|
-| Validation Kernel | 已有 plugin kernel、Validation IR MVP、本地 lifecycle runner、runner 后 replay/event graph/state/replay_vm 侧证据、scene scheduler | adapter execute 尚未完全成为所有底层 tools 的唯一执行通道 |
+| Validation Kernel | 已有 plugin kernel、Validation IR MVP、本地 lifecycle runner、runner 后 replay/event graph/state/replay_vm 侧证据、scene scheduler，并可接 Adapter Flow/Adapter-only runner | 更完整的 agent planner/replay 入口仍是后续扩展 |
 | Event Graph | 已有本地因果图 MVP，已覆盖媒体响应、媒体完成、打断、网络恢复、重启/崩溃前因、风险摘要和项目规则 overlay | 事件因果仍是启发式，项目私有云端协议链路需要继续补 overlay 规则 |
 | Hierarchical StateMachine | 已有并行状态快照、迁移记录、guard 违规、覆盖率、State Assertion DSL-lite 和 coverage 阈值策略 MVP | 尚未实现完整层级状态树；项目私有 profile 阈值还需随实机资料细化 |
 | Capability Runtime | 已有项目能力矩阵 MVP，已显式列出音频回采、媒体响应 oracle、云控配置权限、boot reason oracle 缺口 | codec、真实出声质量评分、具体云 API token 权限校验仍需项目资料或实机接口 |
-| Device Adapter Layer | 已有 adapter registry 和 adapter action executor MVP，常用串口/声卡/网络/云控动作可统一 dry-run 规划 | 现有长流程 runner 尚未全部改为只经 adapter execute interface 调用 |
+| Device Adapter Layer | 已有 adapter registry、adapter action executor、adapter flow、adapter-only 长流程桥和审计脚本 | 后续新增 runner 必须进入 `audit_adapter_only.py`；新硬件动作需要先补 adapter action |
 | IR Compiler | 已有 task、scene node、scene bundle、compiled feature plan bundle 的 Validation IR MVP | agent planner/replay 入口仍是后续扩展，当前 runtime 已不直接执行自然语言 feature |
 | Validation DSL Compiler | 已有 Assertion DSL-lite 和 State Assertion DSL-lite，可表达常见事件存在、窗口、序列、响应、持续时长、状态禁止 | 尚未替代 Python profile 断言，也未形成完整自然语言 DSL 编译器 |
 | Analytics Pipeline | 已有本地 trend MVP | 尚未流式化，也未接长期指标库/看板 |
@@ -214,3 +216,14 @@
 | CLI project-id | `run_state_coverage_policy.py --project-id cskwb01` 输出结果带 project_id |
 | Override smoke | 自定义 cskwb01 first_wake `min_transition_count=999` 输出 WARN；venusws63 未命中 override 保持 PASS |
 | Kernel 集成 | Validation Kernel 后处理会把 package metadata project 或当前 IR project_id 传入 coverage policy |
+
+## 2026-05-27 Adapter-only 长流程 runner 验证
+
+| 能力 | 验证结果 |
+|---|---|
+| Bridge | `tools/core/polaris_adapter_bridge.py` 统一封装音频播放、低延迟播放、控制口 PA/上下电、网络动作和后台串口 logger session |
+| Runner migration | `run_online_mixed_stress.py`、`run_wake_stress.py`、`run_oneshot_matrix.py`、`run_network_recovery_basic.py`、`measure_interrupt_prerequisites.py`、FA2 batch、case/doc runner 播放入口已改为经 Adapter Executor |
+| Audit | `audit_adapter_only.py` 检查 12 个历史长流程/执行入口，`finding_count=0`，结果 PASS |
+| Adapter registry | WB01 `adapters=8/actions=39/warnings=0`；WS63 `adapters=8/actions=38/warnings=2`（CP 空、Wi-Fi/热点配置缺口按 warning 展示） |
+| Dry-run smoke | `serial.logger/start`、`audio.playback/play_skip_probe`、`audio.playback/laid_list`、`network.local/hotspot_on`、`control.serial/cycle_target_window` 均可渲染为 PLAN_OK，未触发真实副作用 |
+| laid self-contained | `tools/audio/polaris_laid.py check/list` 已验证可用；Windows/Linux 安装脚本归档在 `tools/audio/laid/`，新电脑可先 `ensure` 再查询声卡 key |

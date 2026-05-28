@@ -15,7 +15,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, queue_command, read_lines_between
+import serial
+
+from tools.core.polaris_runtime import current_session_dir, ensure_dir, new_artifact_dir, queue_command, read_lines_between
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,22 +40,89 @@ def now_iso_ms() -> str:
     return datetime.now().isoformat(timespec="milliseconds")
 
 
-def load_env_label() -> str:
-    env_path = ROOT / "config" / "polaris_env.json"
-    if not env_path.exists():
-        return "sit"
-    payload = json.loads(env_path.read_text(encoding="utf-8"))
-    label = str(payload.get("current_env_label", "sit")).strip().lower()
-    if label in {"sit", "uat", "pro"}:
-        return label
+def stamp() -> str:
+    return datetime.now().strftime("%Y%m%d%H%M%S%f")[:-3]
+
+
+def smart_decode(data: bytes) -> str:
+    for encoding in ("utf-8", "gb18030", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def read_json(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {}
+
+
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def normalize_env_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    projects = payload.get("projects")
+    if not isinstance(projects, dict):
+        return payload
+    active = str(payload.get("active_project") or payload.get("project_id") or "").strip()
+    if not active and len(projects) == 1:
+        active = next(iter(projects))
+    profile = projects.get(active)
+    if not isinstance(profile, dict):
+        return {}
+    common = payload.get("common") if isinstance(payload.get("common"), dict) else {}
+    merged = deep_merge(common, profile)
+    merged.setdefault("project_id", active)
+    return merged
+
+
+def resolve_env_file(value: str = "") -> Path:
+    if value:
+        path = Path(value)
+        return path if path.is_absolute() else (ROOT / path).resolve()
+    local = ROOT / "polaris.local.json"
+    if local.exists():
+        return local
+    return ROOT / "config" / "polaris_env.json"
+
+
+def load_env_payload(env_file: str = "") -> Dict[str, Any]:
+    return normalize_env_payload(read_json(resolve_env_file(env_file)))
+
+
+def load_env_label(env_payload: Dict[str, Any]) -> str:
+    cloud = env_payload.get("cloud", {}) if isinstance(env_payload.get("cloud"), dict) else {}
+    for value in (cloud.get("api_environment"), cloud.get("device_env"), env_payload.get("current_env_label")):
+        label = str(value or "").strip().lower()
+        if label in {"sit", "uat", "pro"}:
+            return label
     return "sit"
 
 
-def load_env_payload() -> Dict[str, Any]:
-    env_path = ROOT / "config" / "polaris_env.json"
-    if not env_path.exists():
-        return {}
-    return json.loads(env_path.read_text(encoding="utf-8"))
+def env_ports(env_payload: Dict[str, Any]) -> Dict[str, str]:
+    serial = env_payload.get("serial", {}) if isinstance(env_payload.get("serial"), dict) else {}
+    ports = serial.get("ports", {}) if isinstance(serial.get("ports"), dict) else {}
+    return {str(key): str(value or "").strip() for key, value in ports.items()}
+
+
+def env_baudrate(env_payload: Dict[str, Any]) -> int:
+    serial_payload = env_payload.get("serial", {}) if isinstance(env_payload.get("serial"), dict) else {}
+    try:
+        return int(serial_payload.get("baudrate") or env_payload.get("baudrate") or 115200)
+    except Exception:
+        return 115200
 
 
 def normalize_log_line(line: str) -> str:
@@ -75,15 +144,21 @@ def parse_deviceinfo(lines: List[str]) -> Dict[str, str]:
     return result
 
 
-def merge_deviceinfo_with_env(deviceinfo: Dict[str, str]) -> Dict[str, str]:
+def merge_deviceinfo_with_env(deviceinfo: Dict[str, str], env_payload: Dict[str, Any]) -> Dict[str, str]:
     merged = dict(deviceinfo)
-    env_payload = load_env_payload()
     current_deviceinfo = env_payload.get("current_deviceinfo", {}) or {}
     fallback_keys = ("sn", "iot_id", "mac", "wakeup_id")
     for key in fallback_keys:
         if merged.get(key):
             continue
         value = str(current_deviceinfo.get(key, "")).strip()
+        if value:
+            merged[key] = value
+    device = env_payload.get("device", {}) if isinstance(env_payload.get("device"), dict) else {}
+    for key in fallback_keys:
+        if merged.get(key):
+            continue
+        value = str(device.get(key, "")).strip()
         if value:
             merged[key] = value
     if not merged.get("wakeup_id"):
@@ -95,23 +170,68 @@ def merge_deviceinfo_with_env(deviceinfo: Dict[str, str]) -> Dict[str, str]:
     return merged
 
 
-def capture_deviceinfo(session_dir: Path, timeout_s: float = 4.0) -> Dict[str, Any]:
+def capture_deviceinfo(session_dir: Path, env_payload: Dict[str, Any], timeout_s: float = 4.0) -> Dict[str, Any]:
+    ports = env_ports(env_payload)
+    ap_port = ports.get("ap") or "COM14"
     start_dt = datetime.now()
-    queue_command("COM14", "deviceinfo", session_dir=session_dir)
+    queue_command(ap_port, "deviceinfo", session_dir=session_dir)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        lines = read_lines_between("COM14", start_dt, session_dir=session_dir)
+        lines = read_lines_between(ap_port, start_dt, session_dir=session_dir)
         merged = "\n".join(lines)
         if "Device Info:" in merged and "WakeupID:" in merged:
             time.sleep(0.3)
             break
         time.sleep(0.2)
     end_dt = datetime.now()
-    lines = read_lines_between("COM14", start_dt, end_dt, session_dir=session_dir)
-    info = merge_deviceinfo_with_env(parse_deviceinfo(lines))
+    lines = read_lines_between(ap_port, start_dt, end_dt, session_dir=session_dir)
+    info = merge_deviceinfo_with_env(parse_deviceinfo(lines), env_payload)
     return {
         "started_at": start_dt.isoformat(timespec="milliseconds"),
         "ended_at": end_dt.isoformat(timespec="milliseconds"),
+        "ap_port": ap_port,
+        "lines": lines,
+        "parsed": info,
+    }
+
+
+def direct_capture_deviceinfo(env_payload: Dict[str, Any], timeout_s: float = 4.0) -> Dict[str, Any]:
+    ports = env_ports(env_payload)
+    ap_port = ports.get("ap") or "COM14"
+    baudrate = env_baudrate(env_payload)
+    start_dt = datetime.now()
+    partial = ""
+    lines: List[str] = []
+    with serial.Serial(ap_port, baudrate, timeout=0.2, write_timeout=1.0) as ser:
+        ser.write(b"deviceinfo\r\n")
+        try:
+            ser.flush()
+        except Exception:
+            pass
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            waiting = ser.in_waiting or 0
+            if not waiting:
+                time.sleep(0.05)
+                continue
+            partial += smart_decode(ser.read(waiting)).replace("\r", "")
+            while "\n" in partial:
+                line, partial = partial.split("\n", 1)
+                if line.strip():
+                    lines.append(line.strip())
+            merged = "\n".join(lines)
+            if "Device Info:" in merged and "WakeupID:" in merged:
+                time.sleep(0.2)
+                break
+    if partial.strip():
+        lines.append(partial.strip())
+    end_dt = datetime.now()
+    info = merge_deviceinfo_with_env(parse_deviceinfo(lines), env_payload)
+    return {
+        "started_at": start_dt.isoformat(timespec="milliseconds"),
+        "ended_at": end_dt.isoformat(timespec="milliseconds"),
+        "ap_port": ap_port,
+        "baudrate": baudrate,
         "lines": lines,
         "parsed": info,
     }
@@ -131,13 +251,33 @@ def response_to_dict(response: Any) -> Dict[str, Any]:
         elapsed_s = response.elapsed.total_seconds()
     except Exception:
         elapsed_s = None
-    return {
+    payload = {
         "ok": bool(getattr(response, "ok", False)),
         "status_code": getattr(response, "status_code", None),
         "elapsed_s": elapsed_s,
         "text": getattr(response, "text", ""),
         "url": getattr(response, "url", None),
     }
+    payload["business_ok"] = cloud_response_ok(payload)
+    return payload
+
+
+def cloud_response_ok(response_dict: Dict[str, Any]) -> bool:
+    if int(response_dict.get("status_code") or 0) != 200:
+        return False
+    text = str(response_dict.get("text") or "").strip()
+    if not text:
+        return bool(response_dict.get("ok"))
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return bool(response_dict.get("ok"))
+    error_code = payload.get("errorCode")
+    if error_code not in {None, 0, "0"}:
+        return False
+    nested = payload.get("result", {}).get("returnData", {}) if isinstance(payload.get("result"), dict) else {}
+    business_code = nested.get("code", payload.get("code")) if isinstance(nested, dict) else payload.get("code")
+    return business_code in {None, 0, "0", 200, "200"}
 
 
 def collect_log_excerpt(
@@ -159,11 +299,11 @@ def collect_log_excerpt(
     return result
 
 
-def build_request(deviceinfo: Dict[str, str]) -> MideaCloudRequest:
+def build_request(deviceinfo: Dict[str, str], env_payload: Dict[str, Any]) -> MideaCloudRequest:
     device_id = deviceinfo.get("iot_id")
     if not device_id:
         raise RuntimeError("deviceinfo did not return IoT ID")
-    return MideaCloudRequest(int(device_id), environment=load_env_label())
+    return MideaCloudRequest(int(device_id), environment=load_env_label(env_payload))
 
 
 def action_probe(request: MideaCloudRequest, args: argparse.Namespace) -> Any:
@@ -302,6 +442,7 @@ def save_summary(path: Path, payload: Dict[str, Any]) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Polaris app-side cloud control helper")
+    parser.add_argument("--env-file", default="", help="Polaris local config; defaults to root polaris.local.json")
     sub = parser.add_subparsers(dest="action", required=True)
 
     sub.add_parser("probe-device", help="Read deviceinfo and print the latest device identity")
@@ -354,12 +495,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
     args = build_parser().parse_args()
-    session_dir = current_session_dir(ROOT)
-    artifact_dir = new_artifact_dir(f"app_control_{args.action.replace('-', '_')}", session_dir=session_dir)
+    env_payload = load_env_payload(args.env_file)
+    try:
+        session_dir: Optional[Path] = current_session_dir(ROOT)
+    except FileNotFoundError:
+        session_dir = None
+    if session_dir is not None:
+        artifact_dir = new_artifact_dir(f"app_control_{args.action.replace('-', '_')}", session_dir=session_dir)
+    else:
+        artifact_dir = ensure_dir(ROOT / "satellite" / "cucumber-agent-testing" / "debug" / "app_control_direct" / f"{stamp()}_app_control_{args.action.replace('-', '_')}")
+    ports = env_ports(env_payload)
+    ap_port = ports.get("ap") or "COM14"
+    asr_port = ports.get("asr") or ports.get("upper") or "COM13"
 
-    deviceinfo_capture = capture_deviceinfo(session_dir)
+    try:
+        deviceinfo_capture = capture_deviceinfo(session_dir, env_payload) if session_dir is not None else direct_capture_deviceinfo(env_payload)
+    except Exception as exc:
+        payload = {
+            "artifact_dir": str(artifact_dir),
+            "action": args.action,
+            "args": vars(args),
+            "env": load_env_label(env_payload),
+            "env_file": str(resolve_env_file(args.env_file)),
+            "ports": {"ap": ap_port, "asr": asr_port},
+            "result": "BLOCKED",
+            "reason": f"deviceinfo capture failed: {exc}",
+            "evidence_mode": "session" if session_dir is not None else "direct_serial",
+        }
+        save_summary(artifact_dir / "summary.json", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 3
     deviceinfo = deviceinfo_capture["parsed"]
     write_text(artifact_dir / "deviceinfo.log", deviceinfo_capture["lines"])
     save_summary(artifact_dir / "deviceinfo.json", deviceinfo)
@@ -367,32 +534,60 @@ def main() -> None:
     start_dt = datetime.now()
     response = None
     action_meta = ACTION_TABLE[args.action]
-    if args.action != "probe-device":
-        request = build_request(deviceinfo)
-        response = action_meta["handler"](request, args)
-        time.sleep(2.0)
+    try:
+        if args.action != "probe-device":
+            request = build_request(deviceinfo, env_payload)
+            response = action_meta["handler"](request, args)
+            time.sleep(2.0)
+    except Exception as exc:
+        payload = {
+            "artifact_dir": str(artifact_dir),
+            "action": args.action,
+            "args": vars(args),
+            "env": load_env_label(env_payload),
+            "env_file": str(resolve_env_file(args.env_file)),
+            "ports": {"ap": ap_port, "asr": asr_port},
+            "deviceinfo": deviceinfo,
+            "result": "BLOCKED",
+            "reason": f"cloud action failed: {exc}",
+            "evidence_mode": "session" if session_dir is not None else "direct_serial",
+        }
+        save_summary(artifact_dir / "summary.json", payload)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 3
     end_dt = datetime.now()
 
     keywords = action_meta["keywords"]
-    ap_window = read_lines_between("COM14", start_dt, end_dt, session_dir=session_dir)
-    wb_window = read_lines_between("COM13", start_dt, end_dt, session_dir=session_dir)
-    ap_excerpt = collect_log_excerpt(session_dir, start_dt, end_dt, "COM14", keywords)
-    wb_excerpt = collect_log_excerpt(session_dir, start_dt, end_dt, "COM13", keywords)
-    write_text(artifact_dir / "COM14_window.log", ap_window)
-    write_text(artifact_dir / "COM13_window.log", wb_window)
-    write_text(artifact_dir / "COM14_excerpt.log", ap_excerpt)
-    write_text(artifact_dir / "COM13_excerpt.log", wb_excerpt)
+    if session_dir is not None:
+        ap_window = read_lines_between(ap_port, start_dt, end_dt, session_dir=session_dir)
+        wb_window = read_lines_between(asr_port, start_dt, end_dt, session_dir=session_dir)
+        ap_excerpt = collect_log_excerpt(session_dir, start_dt, end_dt, ap_port, keywords)
+        wb_excerpt = collect_log_excerpt(session_dir, start_dt, end_dt, asr_port, keywords)
+    else:
+        ap_window = []
+        wb_window = []
+        ap_excerpt = []
+        wb_excerpt = []
+    write_text(artifact_dir / f"{ap_port}_window.log", ap_window)
+    write_text(artifact_dir / f"{asr_port}_window.log", wb_window)
+    write_text(artifact_dir / f"{ap_port}_excerpt.log", ap_excerpt)
+    write_text(artifact_dir / f"{asr_port}_excerpt.log", wb_excerpt)
 
     response_dict = response_to_dict(response)
+    response_ok = bool(response_dict.get("business_ok"))
     save_summary(artifact_dir / "response.json", response_dict)
 
     payload = {
         "artifact_dir": str(artifact_dir),
         "action": args.action,
         "args": vars(args),
-        "env": load_env_label(),
+        "env": load_env_label(env_payload),
+        "env_file": str(resolve_env_file(args.env_file)),
+        "ports": {"ap": ap_port, "asr": asr_port},
         "deviceinfo": deviceinfo,
         "response": response_dict,
+        "result": "PASS" if args.action == "probe-device" or response_ok else "BLOCKED",
+        "evidence_mode": "session" if session_dir is not None else "direct_serial",
         "ap_window_count": len(ap_window),
         "wb_window_count": len(wb_window),
         "ap_excerpt_count": len(ap_excerpt),
@@ -402,7 +597,10 @@ def main() -> None:
     }
     save_summary(artifact_dir / "summary.json", payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if args.action != "probe-device" and not response_ok:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

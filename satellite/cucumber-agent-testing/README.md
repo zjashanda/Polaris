@@ -78,6 +78,17 @@ WS63 项目至少改：
 - `projects.venusws63.cloud.api_environment/device_env/device_env_command`；如设备不连本机 Wi-Fi，`network.wifi_ssid` 可留空，断网/联网用例会被阻塞或跳过。
 - `common.device.iot_id/projects.venusws63.cloud.device_id`：默认可留空；只有 API/云控无法通过 `deviceinfo` 自动读取时才手动填写。
 
+### 声卡 key 查询与 laid 安装
+
+新电脑首次运行时先执行：
+
+```powershell
+python tools\audio\polaris_laid.py ensure
+python tools\audio\polaris_laid.py list --direction Render
+```
+
+`ensure` 会先检查当前用户 shell 里是否已有 `laid` 命令；没有时从 `tools/audio/laid/` 下的自带安装脚本安装。Windows 写入当前用户 PowerShell profile，Linux 写入 `~/.bashrc`/`~/.zshrc`。查询结果里复制 `Render` 行的 `DeviceKey` 到 `common.audio.default_playback_device_key`；如果没有项目专用声卡，可留空使用电脑默认播放设备。
+
 `config/polaris_env.json` 与 `config/polaris_local_ports.json` 只作为旧脚本兼容/缓存，不再作为新人主配置入口。
 
 ## API 环境必须和设备端一致
@@ -110,6 +121,7 @@ python satellite\cucumber-agent-testing\scripts\run_cucumber.py --mode execute -
 ```powershell
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\basic_command.example.json
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\basic_command.example.json --mode execute --allow-side-effects --manage-session
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode dry-run
 ```
 
 任务文件只描述“我要测哪个功能、用哪些输入、执行窗口多长、是否管理串口 session”。本机串口、声卡、Wi-Fi 等硬件差异放到 `polaris.local.json`。
@@ -218,6 +230,31 @@ python satellite\cucumber-agent-testing\scripts\analyze_online_stress.py `
 
 压测和 Runtime 都会记录“额外识别结果”：包括窗口内出现的 wake marker、在线/离线 ASR 文本、CP `WAKE(0)` 关键词、AP algo keyword。在线压测会把这些写入 `rounds.csv` 和逐轮 `result.json` 的 `asr_texts`、`command_keywords`、`expected_utterances`、`unexpected_asr_texts`；如果 ASR 文本与本轮播放语料不匹配，会输出 `WARN_UNEXPECTED_RECOGNITION`，按误识别/串音/上轮自播残留复核。误唤醒场景中任何 wake、ASR 或 command 事件都会作为 Runtime FAIL，而不是只看 wake marker。
 
+## 在线全双工验证
+
+在线全双工已沉淀为可复制任务：`tasks/examples/online_full_duplex.example.json`。建议先做 precheck/dry-run：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --precheck-only
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode dry-run
+```
+
+真机执行时追加副作用确认：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode execute --allow-side-effects --manage-session --runtime-strict
+```
+
+该任务的 pre adapter flow 会检查 `laid`、切设备端 UAT/SIT 环境、确认在线、下发全双工；主流程执行 `@full_duplex_recognition`，Runtime 会检查全双工配置、timeout 刷新、唤醒前因、ASR/响应闭环以及 reboot/crash。方案和用例矩阵见 `../../docs/wiki/voice-validation/packs/online-full-duplex.md`，运行期归因见 `../../docs/knowledge/common/online_full_duplex_validation.md`。
+
+在线全双工完整矩阵 FD-002~FD-012 已拆成独立 task 和 scene，可先做 scene 级 dry-run：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_kernel_scene.py --scene satellite\cucumber-agent-testing\references\scenes\online_full_duplex_fd002_fd012.scene.example.json --mode dry-run --execute-runner --emit-ir-bundle
+```
+
+单项 task 位于 `tasks/examples/online_full_duplex.*.example.json`，分别覆盖连续对话、媒体打断、超时边界、异常矩阵和随机稳定性。
+
 ## 已支持 tag
 
 | tag | 功能 |
@@ -292,5 +329,5 @@ Runtime replay 的 `assertions.json` 和 `runtime_replay_report.md` 还会输出
 
 原则：自然语言用例可以变，但只要落在已注册的功能意图和 step/action/assertion 上，脚本就不需要大模型实时改代码。
 
-如果新功能来自新的项目资料、外部测试方案或类似 `voice-test-plan-designer` 的 skill，先不要直接改本目录。先把资料放到根目录 `docs/intake/<project_id>/<YYYYMMDD_topic>/`，填写 `learning_manifest.json`。学习和缺口分析完成后，再把可执行部分沉淀到本目录的 feature/reference/task/runtime。
+如果新功能来自新的项目资料、外部测试方案或类似 `voice-test-plan-designer` 的 skill，先不要直接改本目录。先把资料放到根目录 `docs/intake/<project_id>/<YYYYMMDD_topic>/`，填写 `learning_manifest.json`。学习和缺口分析完成后，通用方法先沉淀到 `../../docs/wiki/`，项目差异沉淀到 `../../docs/knowledge/<project_id>/`，再把可执行部分沉淀到本目录的 feature/reference/task/runtime。
 

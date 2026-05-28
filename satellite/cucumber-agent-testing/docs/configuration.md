@@ -128,6 +128,15 @@ WS63/AP+WiFi 项目使用 `polaris.local.json` 中的 `projects.venusws63`，重
 - `default_playback_device_key`：播放设备稳定 key。建议配置，便于多声卡机器复现；如果项目/设备没有单独写声卡 key，可留空或删除，脚本会使用电脑默认播放声卡。
 - `playback_volume`：建议记录目标音量，便于复现实验。脚本是否主动设置音量取决于具体 action。
 
+新电脑首次运行时先确保 `laid` 可用：
+
+```powershell
+python tools\audio\polaris_laid.py ensure
+python tools\audio\polaris_laid.py list --direction Render
+```
+
+`tools/audio/polaris_laid.py` 会优先检查 `laid`，缺失时调用 `tools/audio/laid/install_laid_windows.ps1` 或 `tools/audio/laid/install_laid_linux.sh` 安装到当前用户 shell profile。查询结果中的 `Render DeviceKey` 就是 `default_playback_device_key` 推荐填写值。
+
 如果 key 配错，常见表现是脚本 PASS 了播放命令启动，但设备听不到声音，最终唤醒/识别失败。这类应归因到播放链路或设备听音链路，不应直接判固件失败。
 
 ### `device`
@@ -267,8 +276,11 @@ WS63/AP+WiFi 项目使用 `polaris.local.json` 中的 `projects.venusws63`，重
 | `execution.observe_ms` | 每轮观察窗口。 |
 | `execution.manage_session` | execute 时是否自动启动/停止串口 logger。新人建议 `true`。 |
 | `execution.allow_side_effects` | 是否允许真机副作用。示例建议保持 `false`，执行时通过命令行显式加 `--allow-side-effects`。 |
+| `execution.adapter_flows.pre/post` | 优化任务前置/收尾动作，例如 `laid_check`、`switch_device_env`、`ensure_online`、`set_full_duplex`。 |
 
 命令行参数优先级高于任务文件，任务文件优先级高于根目录 `polaris.local.json`，最后才回退到旧版 `config/polaris_env.json`。
+
+在线全双工可直接复制 `tasks/examples/online_full_duplex.example.json`；它会在主 Cucumber 场景前先做声卡工具检查、设备端 UAT/SIT 环境切换、在线确认和全双工 API 下发。
 
 ## 判断结果对不对
 

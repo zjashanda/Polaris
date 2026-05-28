@@ -16,16 +16,12 @@ import json
 import os
 import random
 import re
-import subprocess
 import sys
-import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-
-import serial
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,6 +32,14 @@ if str(ROOT) not in sys.path:
 
 from polaris_env import load_env_payload, resolve_env_path  # noqa: E402
 from tools.audio.polaris_audio_builder import build_sequence  # noqa: E402
+from tools.core.polaris_adapter_bridge import (  # noqa: E402
+    ManagedAdapterSession,
+    run_adapter_action_capture,
+    run_audio_playback_adapter,
+    start_serial_logger_adapter,
+    stop_serial_logger_adapter,
+)
+from tools.core.polaris_runtime import session_live_file  # noqa: E402
 
 
 DEFAULT_STRATEGY = BDD_ROOT / "references" / "scene_strategy_pool.json"
@@ -130,157 +134,87 @@ class SerialState:
     last_error: Optional[str] = None
 
 
-class SerialReader:
-    def __init__(self, name: str, port: str, baudrate: int, log_path: Path) -> None:
+class HarnessLogReader:
+    def __init__(self, name: str, port: str, baudrate: int, session_dir: Path) -> None:
         self.name = name
         self.port = port
         self.baudrate = baudrate
-        self.log_path = log_path
+        self.log_path = session_live_file(f"{port}.log", session_dir=session_dir)
         self.state = SerialState(name=name, port=port, baudrate=baudrate)
-        self.entries: List[CapturedLine] = []
-        self._fsync_counter = 0
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._serial: Optional[serial.Serial] = None
-        self._handle = None
-        self._lock = threading.Lock()
-        self._partial = ""
 
     def start(self) -> None:
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.log_path.open("w", encoding="utf-8", newline="", buffering=1)
-        self._thread = threading.Thread(target=self._run, name=f"online-stress-serial-{self.name}", daemon=True)
-        self._thread.start()
+        self.state.is_open = self.log_path.parent.exists()
 
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-        try:
-            if self._serial is not None and self._serial.is_open:
-                self._serial.close()
-        finally:
-            if self._handle is not None:
-                self._handle.close()
+        self._refresh_state()
 
     def snapshot_len(self) -> int:
-        with self._lock:
-            return len(self.entries)
+        return len(self._load_entries())
 
     def since(self, index: int) -> List[CapturedLine]:
-        with self._lock:
-            return list(self.entries[index:])
+        return self._load_entries()[index:]
 
-    def _write_line(self, line: str) -> None:
-        clean = line.replace("\r", "").replace("\x00", "").rstrip("\n")
-        if not clean:
-            return
-        entry = CapturedLine(wall=now_iso(), mono=time.perf_counter(), port=self.port, name=self.name, text=clean)
-        with self._lock:
-            self.entries.append(entry)
-        self.state.line_count += 1
-        if self._handle is not None:
-            self._handle.write(f"{entry.wall} [{entry.port}/{entry.name}] {entry.text}\n")
-            self._handle.flush()
-            self._fsync_counter += 1
-            if self._fsync_counter % 100 == 0:
-                os.fsync(self._handle.fileno())
-
-    def _run(self) -> None:
+    def _refresh_state(self) -> None:
         try:
-            self._serial = serial.Serial(self.port, self.baudrate, timeout=0.1)
-            self.state.is_open = True
-            self._write_line(f"[LOGGER] opened {self.port} @ {self.baudrate}")
-            while not self._stop.is_set():
-                data = self._serial.read(self._serial.in_waiting or 1)
-                if not data:
+            self.state.bytes_read = self.log_path.stat().st_size if self.log_path.exists() else 0
+        except OSError:
+            self.state.bytes_read = 0
+        self.state.is_open = self.log_path.parent.exists()
+
+    def _load_entries(self) -> List[CapturedLine]:
+        self._refresh_state()
+        if not self.log_path.exists():
+            return []
+        entries: List[CapturedLine] = []
+        with self.log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for index, raw in enumerate(handle):
+                line = raw.rstrip("\n")
+                if len(line) < 24:
                     continue
-                self.state.bytes_read += len(data)
-                self._partial += smart_decode(data)
-                while "\n" in self._partial:
-                    line, self._partial = self._partial.split("\n", 1)
-                    self._write_line(line)
-            if self._partial:
-                self._write_line(self._partial)
-                self._partial = ""
-        except Exception as exc:
-            self.state.last_error = str(exc)
-            self._write_line(f"[LOGGER_ERROR] {exc}")
+                wall = line[:23]
+                rest = line[24:] if len(line) > 24 else ""
+                text = rest
+                match = re.match(r"\[(?P<port>[^/]+)/(?P<role>[^\]]+)\]\s*(?P<text>.*)$", rest)
+                if match:
+                    text = match.group("text")
+                try:
+                    mono = datetime.fromisoformat(wall).timestamp() + (index / 1000000.0)
+                except ValueError:
+                    mono = float(index)
+                entries.append(CapturedLine(wall=wall, mono=mono, port=self.port, name=self.name, text=text))
+                if "LOGGER_ERROR" in text:
+                    self.state.last_error = text
+        self.state.line_count = len(entries)
+        return entries
 
 
-def send_control(port: str, baudrate: int, command: str, log_path: Path, read_s: float = 0.8) -> Dict[str, Any]:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    started = now_iso()
-    echoed: List[str] = []
-    error = None
-    try:
-        with serial.Serial(port, baudrate, timeout=0.1, write_timeout=1.0) as ser:
-            ser.reset_input_buffer()
-            ser.write((command.rstrip("\r\n") + "\r\n").encode("utf-8", errors="ignore"))
-            ser.flush()
-            deadline = time.time() + read_s
-            chunks: List[str] = []
-            while time.time() < deadline:
-                data = ser.read(ser.in_waiting or 1)
-                if data:
-                    chunks.append(smart_decode(data))
-            echoed = [line for line in "".join(chunks).replace("\r", "").split("\n") if line.strip()]
-    except Exception as exc:
-        error = str(exc)
-    with log_path.open("a", encoding="utf-8", newline="") as handle:
-        handle.write(f"{started} [COMMAND] {command}\n")
-        if error:
-            handle.write(f"{now_iso()} [ERROR] {error}\n")
-        for line in echoed:
-            handle.write(f"{now_iso()} [ECHO] {line}\n")
+def adapter_result_dict(name: str, result: Any, started: datetime, duration_start: float) -> Dict[str, Any]:
     return {
-        "command": command,
-        "port": port,
-        "baudrate": baudrate,
-        "started_at": started,
-        "result": "BLOCKED" if error else "PASS",
-        "error": error,
-        "echo_lines": echoed,
-    }
-
-
-def run_cmd(cmd: List[str], cwd: Path, timeout: Optional[int] = None) -> Dict[str, Any]:
-    started = now_iso()
-    start_mono = time.perf_counter()
-    completed = subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-    )
-    return {
-        "cmd": cmd,
-        "started_at": started,
-        "duration_s": round(time.perf_counter() - start_mono, 3),
-        "returncode": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
+        "cmd": result.cmd,
+        "started_at": started.isoformat(timespec="milliseconds"),
+        "duration_s": round(time.perf_counter() - duration_start, 3),
+        "returncode": result.returncode if result.returncode is not None else (-1 if result.result in {"FAIL", "BLOCKED"} else 0),
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "result": result.result,
+        "adapter": result.to_dict(),
+        "name": name,
     }
 
 
 def play_audio(audio_file: Path, device_key: str, skip_probe: bool = True) -> Dict[str, Any]:
-    script = Path.home() / ".codex" / "skills" / "listenai-play" / "scripts" / "listenai_play.py"
-    cmd = [
-        sys.executable,
-        str(script),
-        "play",
-        "--audio-file",
-        str(audio_file),
-    ]
-    if device_key:
-        cmd.extend(["--device-key", device_key])
-    if skip_probe:
-        cmd.append("--skip-probe")
-    return run_cmd(cmd, ROOT, timeout=120)
+    started = datetime.now()
+    start_mono = time.perf_counter()
+    capture = run_audio_playback_adapter(audio_file, device_key, skip_probe=skip_probe, timeout_s=120)
+    return {
+        "cmd": list(capture.completed.args),
+        "started_at": started.isoformat(timespec="milliseconds"),
+        "duration_s": round(time.perf_counter() - start_mono, 3),
+        "returncode": capture.completed.returncode,
+        "stdout": capture.completed.stdout,
+        "stderr": capture.completed.stderr,
+        "adapter": capture.action_result.to_dict(),
+    }
 
 
 def count_re(entries: Iterable[CapturedLine], regex: re.Pattern[str]) -> int:
@@ -381,12 +315,14 @@ class StressRunner:
         self.logs_dir = self.run_dir / "logs"
         self.audio_dir = self.run_dir / "audio"
         self.rounds_dir = self.run_dir / "rounds"
+        self.session_dir = self.run_dir / "session"
+        self.serial_session: Optional[ManagedAdapterSession] = None
         self.readers = [
-            SerialReader("ap", args.ap_port, args.data_baud, self.logs_dir / f"{args.ap_port}_ap.full.log"),
-            SerialReader("asr", args.asr_port, args.data_baud, self.logs_dir / f"{args.asr_port}_asr.full.log"),
+            HarnessLogReader("ap", args.ap_port, args.data_baud, self.session_dir),
+            HarnessLogReader("asr", args.asr_port, args.data_baud, self.session_dir),
         ]
         if args.cp_port:
-            self.readers.insert(1, SerialReader("cp", args.cp_port, args.data_baud, self.logs_dir / f"{args.cp_port}_cp.full.log"))
+            self.readers.insert(1, HarnessLogReader("cp", args.cp_port, args.data_baud, self.session_dir))
         self.rng = random.Random(args.seed)
         self.results: List[Dict[str, Any]] = []
         self.counts: Dict[str, int] = {}
@@ -493,6 +429,11 @@ class StressRunner:
         finally:
             for reader in self.readers:
                 reader.stop()
+            if self.serial_session is not None:
+                try:
+                    stop_serial_logger_adapter(self.serial_session)
+                finally:
+                    self.serial_session = None
             self._write_final_summary(started_at, end_at)
         return 0
 
@@ -563,26 +504,69 @@ class StressRunner:
             writer.writeheader()
 
     def _start_readers(self) -> None:
+        self.serial_session = start_serial_logger_adapter(
+            self.session_dir,
+            env_file=getattr(self.args, "env_file_resolved", "") or self.args.env_file,
+            log_path=self.logs_dir / "adapter_serial_logger.log",
+        )
         for reader in self.readers:
             reader.start()
         time.sleep(1.2)
 
     def _preflight(self) -> Dict[str, Any]:
-        script = Path.home() / ".codex" / "skills" / "listenai-play" / "scripts" / "listenai_play.py"
-        ensure = run_cmd([sys.executable, str(script), "ensure-laid"], ROOT, timeout=60)
-        probe_cmd = [sys.executable, str(script), "probe"]
-        if self.args.device_key:
-            probe_cmd.extend(["--device-key", self.args.device_key])
-        probe = run_cmd(probe_cmd, ROOT, timeout=60)
+        ensure_start = datetime.now()
+        ensure_mono = time.perf_counter()
+        ensure_result = run_adapter_action_capture(
+            adapter_id="audio.playback",
+            action="ensure_laid",
+            device_key=self.args.device_key,
+            timeout_s=60,
+            execute=True,
+            allow_side_effects=True,
+            log_path=self.logs_dir / "audio_ensure_laid.log",
+        )
+        ensure = adapter_result_dict("audio.ensure_laid", ensure_result, ensure_start, ensure_mono)
+        probe_start = datetime.now()
+        probe_mono = time.perf_counter()
+        probe_result = run_adapter_action_capture(
+            adapter_id="audio.playback",
+            action="probe",
+            device_key=self.args.device_key,
+            timeout_s=60,
+            execute=True,
+            allow_side_effects=True,
+            log_path=self.logs_dir / "audio_probe.log",
+        )
+        probe = adapter_result_dict("audio.probe", probe_result, probe_start, probe_mono)
         control_log = self.logs_dir / f"{self.args.control_port}_control.log"
-        self.control_actions.append(send_control(self.args.control_port, self.args.control_baud, "uut-pa.on", control_log))
+        pa_on_start = datetime.now()
+        pa_on_mono = time.perf_counter()
+        pa_on_result = run_adapter_action_capture(
+            adapter_id="control.serial",
+            action="pa_on",
+            timeout_s=30,
+            execute=True,
+            allow_side_effects=True,
+            log_path=control_log,
+        )
+        self.control_actions.append(adapter_result_dict("control.pa_on", pa_on_result, pa_on_start, pa_on_mono))
         time.sleep(0.4)
-        self.control_actions.append(send_control(self.args.control_port, self.args.control_baud, "pa-enable.set 0 17 0 1", control_log))
+        pa_persist_start = datetime.now()
+        pa_persist_mono = time.perf_counter()
+        pa_persist_result = run_adapter_action_capture(
+            adapter_id="control.serial",
+            action="pa_persist",
+            timeout_s=30,
+            execute=True,
+            allow_side_effects=True,
+            log_path=control_log.with_name(control_log.stem + "_persist.log"),
+        )
+        self.control_actions.append(adapter_result_dict("control.pa_persist", pa_persist_result, pa_persist_start, pa_persist_mono))
         time.sleep(0.4)
         payload = {
             "ensure_laid": ensure,
             "probe": probe,
-            "audio_ready": ensure.get("returncode") == 0 and probe.get("returncode") == 0,
+            "audio_ready": ensure_result.result == "PASS" and probe_result.result == "PASS",
             "serial_ready": all(reader.state.is_open for reader in self.readers),
             "control_ready": all(item.get("result") == "PASS" for item in self.control_actions),
             "control_actions": self.control_actions,

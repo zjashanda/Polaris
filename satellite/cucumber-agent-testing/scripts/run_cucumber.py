@@ -419,6 +419,9 @@ def execute_plans(plans: List[ScenarioPlan], run_dir: Path, allow_side_effects: 
 
     logs_dir = run_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
+    execution_plan = load_json(run_dir / "execution_plan.json")
+    plan_context = execution_plan.get("context", {}) if isinstance(execution_plan.get("context"), dict) else {}
+    env_file = str(plan_context.get("env_file", "") or "")
     results: List[Dict[str, Any]] = []
     for plan in plans:
         for command in plan.commands:
@@ -435,7 +438,7 @@ def execute_plans(plans: List[ScenarioPlan], run_dir: Path, allow_side_effects: 
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    env={**os.environ, "POLARIS_BDD_RUN_DIR": str(run_dir)},
+                    env={**os.environ, "POLARIS_BDD_RUN_DIR": str(run_dir), "POLARIS_ENV_FILE": env_file, "PYTHONIOENCODING": "utf-8"},
                 )
                 assert proc.stdout is not None
                 for line in proc.stdout:
@@ -691,6 +694,21 @@ def summarize_first_wake(run_dir: Path) -> Dict[str, Any]:
     playback_ok = bool(playback_returncodes) and all(code == 0 for code in playback_returncodes)
     plan_payload = read_json_safe(run_dir / "execution_plan.json") or {}
     context = plan_payload.get("context", {}) if isinstance(plan_payload.get("context"), dict) else {}
+    managed_payload = plan_payload.get("managed_session", {}) if isinstance(plan_payload.get("managed_session"), dict) else {}
+    heartbeat = managed_payload.get("heartbeat", {}) if isinstance(managed_payload.get("heartbeat"), dict) else {}
+    heartbeat_ports = heartbeat.get("ports", {}) if isinstance(heartbeat.get("ports"), dict) else {}
+    serial_open_errors: List[Dict[str, Any]] = []
+    for port, info in heartbeat_ports.items():
+        if not isinstance(info, dict):
+            continue
+        if info.get("is_open") is False or info.get("last_error"):
+            serial_open_errors.append(
+                {
+                    "port": port,
+                    "role": info.get("role", ""),
+                    "last_error": info.get("last_error", ""),
+                }
+            )
     cp_required = bool(str(context.get("cp_port", "") or "").strip())
     asr_required = bool(str(context.get("asr_port", "") or "").strip())
     missing_sources: List[str] = []
@@ -705,6 +723,10 @@ def summarize_first_wake(run_dir: Path) -> Dict[str, Any]:
         result = "BLOCKED"
         attribution = "audio_playback_or_device_key"
         reason = f"播放链路未通过，returncode={playback_returncodes}。"
+    elif serial_open_errors:
+        result = "BLOCKED"
+        attribution = "serial_logger_or_ports"
+        reason = f"串口日志采集存在端口打开失败，不能把证据缺失归因为固件失败：{serial_open_errors}。"
     elif total_lines == 0:
         result = "BLOCKED"
         attribution = "serial_logger_or_ports"

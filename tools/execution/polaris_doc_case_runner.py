@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 from pathlib import Path
 import sys
 
@@ -21,13 +21,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from tools.cloud.polaris_app_control import build_request as build_cloud_request
-from tools.cloud.polaris_app_control import capture_deviceinfo as capture_cloud_deviceinfo
+from tools.cloud.polaris_app_control import build_request as _build_cloud_request
+from tools.cloud.polaris_app_control import capture_deviceinfo as _capture_cloud_deviceinfo
 from tools.cloud.polaris_app_control import collect_log_excerpt as collect_cloud_log_excerpt
+from tools.cloud.polaris_app_control import load_env_payload as load_cloud_env_payload
 from tools.cloud.polaris_app_control import response_to_dict as cloud_response_to_dict
 from tools.audio.polaris_audio_builder import build_sequence
+from tools.core.polaris_adapter_bridge import run_audio_playback_adapter, run_adapter_action_capture
 from tools.execution.polaris_case_runner import (
-    LISTENAI_PLAY_SCRIPT,
     default_playback_device_key,
     playback_timeout_seconds,
     playback_device_label,
@@ -38,11 +39,6 @@ from tools.execution.polaris_case_runner import (
 from tools.library.polaris_doc_case_lib import MODE_OFFLINE, SUPPORTED_DOC_CASES, StepToken, default_doc_xlsx, load_doc_case, parse_tone_catalog
 from tools.device.polaris_network_orchestrator import collect_window as collect_network_window
 from tools.device.polaris_network_orchestrator import command_window as network_command_window
-from tools.device.polaris_network_orchestrator import hotspot_set, hotspot_status
-from tools.device.polaris_power_control import COMMANDS as POWER_COMMANDS
-from tools.device.polaris_power_control import collect_window_logs as collect_power_window_logs
-from tools.device.polaris_power_control import infer_cycle as infer_power_cycle
-from tools.device.polaris_power_control import send_control_command as send_power_control_command
 from tools.core.polaris_config import read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, parse_prefixed_timestamp, queue_command, read_lines_between, workspace_root
 from tools.probe.polaris_state_probe import diff_states, snapshot
@@ -78,6 +74,38 @@ SPLIT_TTS_HEAD_RE = re.compile(r"offline_tts_", re.I)
 SPLIT_TTS_TAIL_RE = re.compile(r"callbak,\s*tts:\s*(\d+)", re.I)
 ALGO_VERSION_LINE_RE = re.compile(r"Algo Version,\s*(.+)$", re.I)
 PLAYER_RESET_USER_RE = re.compile(r'player reset by "user"', re.I)
+
+
+def adapter_hotspot_status() -> Dict[str, Any]:
+    result = run_adapter_action_capture(
+        adapter_id="network.local",
+        action="hotspot_status",
+        timeout_s=60,
+        execute=True,
+        allow_side_effects=True,
+    )
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except Exception:
+        payload = {}
+    payload.setdefault("_adapter_result", result.to_dict())
+    return payload
+
+
+def adapter_hotspot_set(enable: bool) -> Dict[str, Any]:
+    result = run_adapter_action_capture(
+        adapter_id="network.local",
+        action="hotspot_on" if enable else "hotspot_off",
+        timeout_s=90,
+        execute=True,
+        allow_side_effects=True,
+    )
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except Exception:
+        payload = {}
+    payload.setdefault("_adapter_result", result.to_dict())
+    return payload
 BOOT_MARKER_RE = re.compile(r"\bboot\.action=boot_image\b", re.I)
 CRASH_MARKER_RE = re.compile(r"\b(panic|assert|exception|watchdog|hardfault|guru meditation)\b", re.I)
 AI_DISCONNECT_RE = re.compile(r"AI disconnected|wifiLink_update:disconnect close", re.I)
@@ -228,6 +256,21 @@ def normalize_mac(raw: str) -> str:
 
 def load_env_config() -> dict:
     return json.loads((workspace_root() / "config" / "polaris_env.json").read_text(encoding="utf-8"))
+
+
+def current_runtime_env_config() -> dict:
+    env_file = os.environ.get("POLARIS_ENV_FILE", "").strip()
+    if env_file:
+        return load_cloud_env_payload(env_file)
+    return read_env_config()
+
+
+def capture_cloud_deviceinfo(session_dir: Path) -> dict:
+    return _capture_cloud_deviceinfo(session_dir, current_runtime_env_config())
+
+
+def build_cloud_request(deviceinfo: Dict[str, str]):
+    return _build_cloud_request(deviceinfo, current_runtime_env_config())
 
 
 def hotspot_has_device(status: Dict[str, Any], device_mac: str) -> bool:
@@ -877,34 +920,23 @@ def run_low_latency_playback(audio_file: Path, device_key: str, execution_dir: P
     if ffmpeg_run.returncode != 0:
         return ffmpeg_run
 
-    cmd = [
-        sys.executable,
-        str(LISTENAI_PLAY_SCRIPT),
-        "internal-play-once",
-        "--platform",
-        "windows",
-    ]
-    if device_key:
-        cmd.extend(["--device-key", device_key])
-    cmd.extend(["--audio-file", str(normalized_wav)])
-    completed = subprocess.run(
-        cmd,
-        cwd=str(workspace_root()),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=playback_timeout_seconds(normalized_wav),
+    capture = run_audio_playback_adapter(
+        normalized_wav,
+        device_key,
+        low_latency=True,
+        timeout_s=playback_timeout_seconds(normalized_wav),
     )
+    completed = capture.completed
     (execution_dir / f"{log_prefix}_stdout.log").write_text(completed.stdout, encoding="utf-8")
     (execution_dir / f"{log_prefix}_stderr.log").write_text(completed.stderr, encoding="utf-8")
     (execution_dir / f"{log_prefix}_command.json").write_text(
         json.dumps(
             {
-                "cmd": cmd,
+                "cmd": list(completed.args),
                 "returncode": completed.returncode,
                 "device_key": device_key,
                 "playback_device": playback_device_label(device_key),
+                "adapter_executor": capture.action_result.to_dict(),
             },
             ensure_ascii=False,
             indent=2,
@@ -3033,16 +3065,16 @@ def build_blocked_case_payload(case, rules: dict, reason: str, tone_catalog: dic
 def prepare_local_hotspot_attachment(execution_dir: Path, session_dir: Path, device_mac: str, wait_s: float = 60.0) -> dict:
     artifact_dir = execution_dir / "setup" / "01_prepare_local_hotspot"
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    before_status = hotspot_status()
+    before_status = adapter_hotspot_status()
     startup_window = None
 
     if str(before_status.get("operational_state", "")).lower() != "on":
         startup_start = datetime.now()
-        startup_result = hotspot_set(True)
+        startup_result = adapter_hotspot_set(True)
         time.sleep(10.0)
         startup_end = datetime.now()
         startup_window = collect_network_window(session_dir, startup_start, startup_end, artifact_dir, "hotspot_start")
-        before_status = hotspot_status()
+        before_status = adapter_hotspot_status()
         save_json(artifact_dir / "hotspot_start_result.json", startup_result)
 
     already_attached = (
@@ -3074,7 +3106,7 @@ def prepare_local_hotspot_attachment(execution_dir: Path, session_dir: Path, dev
     queue_command("COM13", "reboot", session_dir=session_dir)
     time.sleep(wait_s)
     reboot_end = datetime.now()
-    after_status = hotspot_status()
+    after_status = adapter_hotspot_status()
     reboot_window = collect_network_window(session_dir, reboot_start, reboot_end, artifact_dir, "after_reboot")
     success = (
         str(after_status.get("operational_state", "")).lower() == "on"
@@ -3341,16 +3373,25 @@ def cycle_case_power_target(
         raise ValueError(f"unsupported power target: {target}")
 
     start_dt = datetime.now()
-    actions = [
-        send_power_control_command(POWER_COMMANDS["wb01-on"], "COM15", 115200, artifact_dir),
-    ]
-    time.sleep(off_wait_s)
-    actions.append(send_power_control_command(POWER_COMMANDS["wb01-off"], "COM15", 115200, artifact_dir))
-    time.sleep(observe_s)
+    adapter_result = run_adapter_action_capture(
+        adapter_id="control.serial",
+        action="cycle_target_window",
+        params={
+            "target": target,
+            "off_wait": str(off_wait_s),
+            "observe": str(observe_s),
+            "output_dir": str(artifact_dir),
+        },
+        timeout_s=int(off_wait_s + observe_s + 60),
+        execute=True,
+        allow_side_effects=True,
+    )
     end_dt = datetime.now()
 
-    marker_summary = collect_power_window_logs(session_dir, start_dt, end_dt, artifact_dir)
-    inference = infer_power_cycle(target, marker_summary)
+    helper_summary_path = artifact_dir / "summary.json"
+    helper_summary = json.loads(helper_summary_path.read_text(encoding="utf-8-sig")) if helper_summary_path.exists() else {}
+    marker_summary = helper_summary.get("markers", {})
+    inference = helper_summary.get("inference", {})
     success = bool(inference.get("hard_power_cycle_likely")) and bool(inference.get("wb01_booted")) and bool(inference.get("ap_booted"))
     summary = {
         "action": f"power_cycle_{target}",
@@ -3361,7 +3402,8 @@ def cycle_case_power_target(
         "observe_s": observe_s,
         "started_at": start_dt.isoformat(timespec="milliseconds"),
         "ended_at": end_dt.isoformat(timespec="milliseconds"),
-        "actions": actions,
+        "actions": helper_summary.get("actions", []),
+        "adapter_executor": adapter_result.to_dict(),
         "markers": marker_summary,
         "inference": inference,
     }
@@ -3617,12 +3659,12 @@ def toggle_case_hotspot_state(
 ) -> dict:
     artifact_dir = execution_dir / phase_root / label
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    before_status = hotspot_status()
+    before_status = adapter_hotspot_status()
     action_start = datetime.now()
-    action_result = hotspot_set(enable)
+    action_result = adapter_hotspot_set(enable)
     time.sleep(wait_s)
     action_end = datetime.now()
-    after_status = hotspot_status()
+    after_status = adapter_hotspot_status()
     window = collect_network_window(session_dir, action_start, action_end, artifact_dir, "window")
 
     if enable:
@@ -7909,7 +7951,7 @@ def run_doc_case(case_id: str, device_key: str = "") -> Path:
         shutil.copy2(default_doc_xlsx(), execution_dir / "doc_cases.xlsx")
         (execution_dir / "doc_case.json").write_text(json.dumps(case.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
-        resolved_device_key = str(device_key or default_playback_device_key(read_env_config())).strip()
+        resolved_device_key = str(device_key or default_playback_device_key(current_runtime_env_config())).strip()
         if rules["runner_kind"] == "dialog_phase_case" and case.level3 == MODE_OFFLINE:
             return run_offline_dialog_phase_case(
                 case=case,

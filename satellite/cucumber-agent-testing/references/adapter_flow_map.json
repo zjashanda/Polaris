@@ -5,68 +5,153 @@
     "pa_recover": {
       "description": "Enable and persist PA when audio playback succeeds but the DUT does not wake.",
       "steps": [
-        {"adapter_id": "control.serial", "action": "pa_on"},
-        {"adapter_id": "control.serial", "action": "pa_persist"}
+        {
+          "adapter_id": "control.serial",
+          "action": "pa_on"
+        },
+        {
+          "adapter_id": "control.serial",
+          "action": "pa_persist"
+        }
+      ]
+    },
+    "laid_check": {
+      "description": "Check whether the local laid audio-device query command is available.",
+      "steps": [
+        {
+          "adapter_id": "audio.playback",
+          "action": "laid_check"
+        }
+      ]
+    },
+    "laid_list": {
+      "description": "List stable local audio render device keys through the Polaris laid wrapper.",
+      "steps": [
+        {
+          "adapter_id": "audio.playback",
+          "action": "laid_list"
+        }
+      ]
+    },
+    "ensure_laid": {
+      "description": "Install or refresh the local laid helper when it is missing.",
+      "steps": [
+        {
+          "adapter_id": "audio.playback",
+          "action": "ensure_laid"
+        }
       ]
     },
     "power_on": {
       "description": "Power on DUT through configured control serial port.",
       "steps": [
-        {"adapter_id": "control.serial", "action": "power_on"}
+        {
+          "adapter_id": "control.serial",
+          "action": "power_on"
+        }
       ]
     },
     "power_off": {
       "description": "Power off DUT through configured control serial port.",
       "steps": [
-        {"adapter_id": "control.serial", "action": "power_off"}
+        {
+          "adapter_id": "control.serial",
+          "action": "power_off"
+        }
       ]
     },
     "switch_device_env": {
       "description": "Send the project device environment command on AP before cloud/API operations.",
       "steps": [
-        {"adapter_id": "serial.ap", "action": "set_device_env"}
+        {
+          "adapter_id": "serial.ap",
+          "action": "set_device_env"
+        }
       ]
     },
     "hotspot_status": {
       "description": "Query local Windows hotspot state.",
       "steps": [
-        {"adapter_id": "network.local", "action": "hotspot_status"}
+        {
+          "adapter_id": "network.local",
+          "action": "hotspot_status"
+        }
       ]
     },
     "ensure_online": {
       "description": "Ensure local hotspot is up and DUT can reconnect.",
       "steps": [
-        {"adapter_id": "network.local", "action": "ensure_online", "params": {"ssid": "{wifi_ssid}", "pwd": "{wifi_password}"}}
+        {
+          "adapter_id": "network.local",
+          "action": "ensure_online",
+          "params": {
+            "ssid": "{wifi_ssid}",
+            "pwd": "{wifi_password}"
+          }
+        }
       ]
     },
     "wake_audio_file": {
       "description": "Play one wake or command audio file through the configured playback device.",
       "steps": [
-        {"adapter_id": "audio.playback", "action": "play", "params": {"audio_file": "{audio_file}"}}
+        {
+          "adapter_id": "audio.playback",
+          "action": "play",
+          "params": {
+            "audio_file": "{audio_file}"
+          }
+        }
       ]
     },
     "wake_audio_repeat": {
       "description": "Repeat one wake or command audio file through the configured playback device.",
       "steps": [
-        {"adapter_id": "audio.playback", "action": "play_repeat", "params": {"audio_file": "{audio_file}", "repeat": "{repeat}"}}
+        {
+          "adapter_id": "audio.playback",
+          "action": "play_repeat",
+          "params": {
+            "audio_file": "{audio_file}",
+            "repeat": "{repeat}"
+          }
+        }
       ]
     },
     "set_half_duplex": {
       "description": "Set half-duplex mode through cloud API.",
       "steps": [
-        {"adapter_id": "cloud.api", "action": "set_full_duplex", "params": {"enable": "0", "timeout": "{half_duplex_timeout_s}"}}
+        {
+          "adapter_id": "cloud.api",
+          "action": "set_full_duplex",
+          "params": {
+            "enable": "0",
+            "timeout": "{half_duplex_timeout_s}"
+          }
+        }
       ]
     },
     "set_full_duplex": {
       "description": "Set full-duplex mode through cloud API.",
       "steps": [
-        {"adapter_id": "cloud.api", "action": "set_full_duplex", "params": {"enable": "1", "timeout": "{full_duplex_timeout_s}"}}
+        {
+          "adapter_id": "cloud.api",
+          "action": "set_full_duplex",
+          "params": {
+            "enable": "1",
+            "timeout": "{full_duplex_timeout_s}"
+          }
+        }
       ]
     },
     "set_volume": {
       "description": "Set device volume through cloud API.",
       "steps": [
-        {"adapter_id": "cloud.api", "action": "set_volume", "params": {"value": "{volume}"}}
+        {
+          "adapter_id": "cloud.api",
+          "action": "set_volume",
+          "params": {
+            "value": "{volume}"
+          }
+        }
       ]
     },
     "set_night_mode": {
@@ -88,7 +173,37 @@
     "proactive_interaction": {
       "description": "Trigger long TTS/self-play media through cloud API for interrupt tests.",
       "steps": [
-        {"adapter_id": "cloud.api", "action": "proactive_interaction"}
+        {
+          "adapter_id": "cloud.api",
+          "action": "proactive_interaction"
+        }
+      ]
+    },
+    "hotspot_on": {
+      "description": "Turn on local Windows hotspot through the network adapter.",
+      "steps": [
+        {
+          "adapter_id": "network.local",
+          "action": "hotspot_on"
+        }
+      ]
+    },
+    "hotspot_off": {
+      "description": "Turn off local Windows hotspot through the network adapter for offline/negative network cases.",
+      "steps": [
+        {
+          "adapter_id": "network.local",
+          "action": "hotspot_off"
+        }
+      ]
+    },
+    "hotspot_cycle": {
+      "description": "Cycle local Windows hotspot off/on for network recovery validation.",
+      "steps": [
+        {
+          "adapter_id": "network.local",
+          "action": "hotspot_cycle"
+        }
       ]
     }
   }

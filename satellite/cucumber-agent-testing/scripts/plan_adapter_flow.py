@@ -58,8 +58,9 @@ def parse_params(values: List[str]) -> Dict[str, str]:
     return result
 
 
-def default_context(env_payload: Dict[str, Any]) -> Dict[str, str]:
+def default_context(env_payload: Dict[str, Any], env_path: Path) -> Dict[str, str]:
     return {
+        "env_file": str(env_path),
         "wifi_ssid": str(nested(env_payload, "network", "wifi_ssid") or ""),
         "wifi_password": str(nested(env_payload, "network", "wifi_password") or env_payload.get("wifi_password", "") or ""),
         "half_duplex_timeout_s": str(nested(env_payload, "timeouts", "half_duplex_timeout_s") or "15"),
@@ -114,7 +115,7 @@ def main() -> int:
     if not isinstance(flow, dict):
         raise SystemExit(f"adapter flow not found: {args.flow}")
 
-    context = default_context(env_payload)
+    context = default_context(env_payload, env_path)
     context.update(parse_params(args.param))
     registry = build_adapter_registry(env_payload)
     dry_run = not args.execute
@@ -130,7 +131,7 @@ def main() -> int:
             registry,
             adapter_id=str(step.get("adapter_id", "")),
             action_name=str(step.get("action", "")),
-            params=params,
+            params={**context, **params},
             allow_side_effects=args.allow_side_effects,
             dry_run=dry_run,
             cwd=WORKSPACE_ROOT,
