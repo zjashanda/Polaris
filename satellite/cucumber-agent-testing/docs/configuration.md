@@ -121,23 +121,53 @@ WS63/AP+WiFi 项目使用 `polaris.local.json` 中的 `projects.venusws63`，重
 ```json
 "audio": {
   "default_playback_device_key": "",
-  "playback_volume": 80
+  "playback_volume": 80,
+  "capture_device_key": "",
+  "loopback_device_key": "",
+  "capture_device_name": "",
+  "capture_sample_rate": 16000,
+  "capture_channels": 1,
+  "capture_duration_s": 5,
+  "acoustic_oracle": {
+    "thresholds": {
+      "active_threshold_dbfs": -50,
+      "min_rms_dbfs": -45,
+      "min_peak_dbfs": -35,
+      "min_active_duration_ms": 300,
+      "max_clip_ratio": 0.01
+    }
+  }
 }
 ```
 
 - `default_playback_device_key`：播放设备稳定 key。建议配置，便于多声卡机器复现；如果项目/设备没有单独写声卡 key，可留空或删除，脚本会使用电脑默认播放声卡。
 - `playback_volume`：建议记录目标音量，便于复现实验。脚本是否主动设置音量取决于具体 action。
+- `capture_device_key` / `loopback_device_key`：回采/loopback 设备稳定 key，用于证明“真的出声”。没有配置时只能做日志级媒体 oracle。
+- `capture_device_name`：当 `sounddevice` 无法直接用稳定 key 打开设备时，可填写系统录音设备名或设备索引。
+- `capture_sample_rate` / `capture_channels` / `capture_duration_s`：录音采样率、通道数和录音窗口。
+- `acoustic_oracle.thresholds`：声学回采阈值；默认检查 RMS、峰值、有效时长和削波比例。
 
 新电脑首次运行时先确保 `laid` 可用：
 
 ```powershell
 python tools\audio\polaris_laid.py ensure
 python tools\audio\polaris_laid.py list --direction Render
+python tools\audio\polaris_laid.py list --direction Capture
 ```
 
 `tools/audio/polaris_laid.py` 会优先检查 `laid`，缺失时调用 `tools/audio/laid/install_laid_windows.ps1` 或 `tools/audio/laid/install_laid_linux.sh` 安装到当前用户 shell profile。查询结果中的 `Render DeviceKey` 就是 `default_playback_device_key` 推荐填写值。
 
 如果 key 配错，常见表现是脚本 PASS 了播放命令启动，但设备听不到声音，最终唤醒/识别失败。这类应归因到播放链路或设备听音链路，不应直接判固件失败。
+
+需要真实声学证据时可执行：
+
+```powershell
+python tools\audio\polaris_acoustic_oracle.py probe
+python tools\audio\polaris_acoustic_oracle.py record --env-file polaris.local.json
+python tools\audio\polaris_acoustic_oracle.py analyze --audio-file <capture.wav> --env-file polaris.local.json
+```
+
+如果录音依赖或回采设备缺失，`record` 会输出 `BLOCKED`；不能用日志级媒体 PASS 代替真实声学 PASS。
 
 ### `device`
 
@@ -179,6 +209,14 @@ python tools\audio\polaris_laid.py list --direction Render
 - `device_id`：API 调用使用的 deviceId/IoT ID；默认可留空。脚本能通过 `deviceinfo` 读到 IoT ID 时会优先使用自动读取值；读不到且要跑 API/云控时再手动填写，建议和 `device.iot_id` 一致。
 
 重要：只改 API 环境、不切设备端环境是不够的。执行云控/API 前，应先在 AP/CSK 串口下发 `device_env_command`，再 `reboot`，等设备联网后再调用 API。否则可能出现接口返回成功但设备不生效、connector/channel 异常或控制错环境。
+
+WS63/venusws63 还要额外检查云控授权版本。当前沉淀规则：`Project Version=35.03.01.01.18.26.05.04.00.02` 属于已知后台未授权 API 控制版本，应切到 `35.03.01.01.18.26.05.04.00.01` 后再进入 UAT/SIT。可执行：
+
+```powershell
+python tools\cloud\polaris_cloud_diagnostics.py --env-file <你的配置文件> --probe-cloud
+```
+
+诊断会同时检查 `version`、`flash.show`/`flash.get.int env`、`deviceinfo` 和云端业务码。HTTP 200 但业务 `code=501` 仍属于云控前置阻塞，应判 `BLOCKED`，不能判固件 FAIL。
 
 ### `network`
 

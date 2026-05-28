@@ -12,6 +12,15 @@
   - 音色补验：`satellite/cucumber-agent-testing/debug/venusws63_uat_api_probe/20260520_110606_api_character_followup_u2`
   - API 后唤醒链路确认：`satellite/cucumber-agent-testing/debug/venusws63_uat_api_probe/20260520_110934_post_api_wake_check`
 
+## 2026-05-28 云控前置复核补充
+
+- 当前新接线验证为 AP `COM16@921600`、上位/WiFi `COM20@921600`、控制口 `COM17@115200`。
+- AP `version` 已确认 `Project Version: 35.03.01.01.18.26.05.04.00.01`，命中本地已知云控授权版本清单。
+- AP `flash.show` / `flash.get.int env` 已确认 `env=1`，即 UAT，和当前 `cloud.api_environment=uat` 一致。
+- UAT 云端全双工 v2 设置仍返回业务 `501` / “设备未上线，不可变更全双工状态！”；SIT 对同一 IoT ID 返回 `501` / “获取设备信息异常[未登录过的设备]！”。
+- 因此当前失败不是 `.00.02` 未授权版本，也不是设备端 env 与 UAT 配置不一致；仍应归为云端在线态/目标环境注册/后台授权前置 `BLOCKED`，不能判固件 FAIL。
+- 详细排查逻辑见 `docs/knowledge/venusws63/cloud-control-version-gate.md`；自动诊断工具为 `tools/cloud/polaris_cloud_diagnostics.py`。
+
 ## 结论分级
 
 - `PASS`：HTTP/业务码成功，并且 COM14/COM13 抓到明确下发或执行证据。

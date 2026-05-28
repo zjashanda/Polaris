@@ -43,3 +43,22 @@ BLOCKED/FAIL 边界：
 - 只有能从日志证明事件链的异常，才进入 Event Graph rule。
 - 只有重复出现或需求明确的现象，才升级成强断言；单次不确定现象先做 WARN/NEEDS_REVIEW。
 - 所有额外 wake/ASR/command 都要保留，不能因为主流程 PASS 而丢弃。
+
+## 5. 自动化入口
+
+1. 候选生成：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\generate_failure_case.py --run <run_or_optimized_dir>
+```
+
+2. 人工确认 `candidate_cases.md`、`suggested_registry_updates.md`、`retest_checklist.md`。
+3. 确认后注册：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\register_failure_case.py `
+  --package <failure_case_package.json> `
+  --approve --approved-by <name>
+```
+
+注册脚本会更新 failure registry、生成回归 task、生成 scene 节点，并把失败模式写入 `docs/wiki/voice-validation/failure-patterns/`。未加 `--approve` 时只生成预览，不写 workspace。

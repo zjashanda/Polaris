@@ -170,10 +170,25 @@ python satellite\cucumber-agent-testing\scripts\generate_failure_case.py --run <
 - `suggested_registry_updates.md`：断言、Event Graph、constraint 补强建议。
 - `retest_checklist.md`：复测前置检查清单。
 
+候选不能直接自动落库，必须先人工确认；确认后再执行：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\register_failure_case.py `
+  --package <failure_case_package.json> `
+  --approve --approved-by <name>
+```
+
+注册后会写入：
+
+- `satellite/cucumber-agent-testing/references/failure_regression_registry.json`
+- `satellite/cucumber-agent-testing/tasks/generated/regression/`
+- `satellite/cucumber-agent-testing/references/scenes/generated_failure_regression.scene.example.json`
+- `docs/wiki/voice-validation/failure-patterns/`
+
 在线音乐、新闻、相声、问答、TTS 或 MP3 场景，报告中必须补充媒体响应 oracle：
 
 ```powershell
 python satellite\cucumber-agent-testing\scripts\analyze_media_response_oracle.py --run <run_dir>
 ```
 
-v1 oracle 只做日志/事件级判断，区分云端/TTS 响应、播放器启动、播放完成、HTTP/player 错误、重启/崩溃；真实声学播放需要后续配置 loopback/capture。
+v1 oracle 只做日志/事件级判断，区分云端/TTS 响应、播放器启动、播放完成、HTTP/player 错误、重启/崩溃；真实声学播放需要配置 loopback/capture 并执行 `tools/audio/polaris_acoustic_oracle.py`。

@@ -677,6 +677,9 @@ __pycache__/
 - 先确认 `polaris.local.json` 的 `cloud.api_environment` 是 `uat` 还是 `sit`。
 - 再确认设备端 CSK/AP 已切到同一环境。
 - 环境切换命令通常在 `projects.<项目>.cloud.device_env_command` 中配置，切换后可能需要重启。
+- WS63 还要确认 `version` 输出的 `Project Version`。当前沉淀规则：`35.03.01.01.18.26.05.04.00.02` 已知后台未授权 API 控制，应切到 `35.03.01.01.18.26.05.04.00.01` 后再进入 UAT/SIT。
+- 可用 `python tools\cloud\polaris_cloud_diagnostics.py --env-file <你的配置> --probe-cloud` 生成云控诊断报告；HTTP 200 但业务 `code=501` 仍归为 `BLOCKED`，不能判固件 FAIL。
+- 详细分析逻辑见 `docs/knowledge/venusws63/cloud-control-version-gate.md`。
 
 ### 新写 Cucumber 用例为什么还要 registry
 
@@ -720,10 +723,27 @@ python satellite\cucumber-agent-testing\scripts\generate_requirement_package.py 
 python satellite\cucumber-agent-testing\scripts\generate_failure_case.py --run satellite\cucumber-agent-testing\debug\optimized_runs\<run>
 ```
 
+- 候选经人工确认后注册为稳定回归资产：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\register_failure_case.py `
+  --package satellite\cucumber-agent-testing\debug\failure_cases\<pkg>\failure_case_package.json `
+  --approve --approved-by <你的名字>
+```
+
 - 媒体/TTS/MP3 日志级响应 oracle：
 
 ```powershell
 python satellite\cucumber-agent-testing\scripts\analyze_media_response_oracle.py --run satellite\cucumber-agent-testing\debug\runs\<run>
+```
+
+- 声学回采/loopback oracle（真实出声证据）：
+
+```powershell
+python tools\audio\polaris_acoustic_oracle.py probe
+python tools\audio\polaris_acoustic_oracle.py self-test
+python tools\audio\polaris_acoustic_oracle.py record --env-file polaris.local.json
+python tools\audio\polaris_acoustic_oracle.py analyze --audio-file <capture.wav> --env-file polaris.local.json
 ```
 
 - 多 run 总报告：
@@ -732,13 +752,16 @@ python satellite\cucumber-agent-testing\scripts\analyze_media_response_oracle.py
 python satellite\cucumber-agent-testing\scripts\build_validation_summary_report.py --run <run_or_optimized_dir> --run <another_run>
 ```
 
-媒体 oracle v1 只能证明日志/事件层面的云端 TTS、播放器启动、完成和错误 marker；未配置 `loopback_device_key` 或 `capture_device_key` 时，不声称真实声学出声和音质通过。
+媒体 oracle v1 只能证明日志/事件层面的云端 TTS、播放器启动、完成和错误 marker；未配置 `loopback_device_key` 或 `capture_device_key` 时，不声称真实声学出声和音质通过。声学回采 oracle 会分析回采 WAV 的 RMS、峰值、有效时长和削波比例；它只证明“声学信号存在且质量阈值达标”，语义正确仍由串口/ASR/媒体日志断言负责。
 
 ## 2026-05-28 真机闭环补充
 
 - 前置 Adapter 现在支持“无 managed session 直接执行”：`serial.ap.set_device_env` 会按当前 `--env-file` 渲染 AP 串口和波特率，直接写串口时使用 `--no-sync-config`，避免把 WS63/WB01 端口串到根本地配置。
 - 云控 Adapter 必须传 `--env-file`，并且会校验 HTTP 200 之外的业务码；例如返回 `code=501` 的“设备未上线”会判为 `BLOCKED`，不会误判为设置成功。
+- WS63 云控诊断已沉淀到 `tools/cloud/polaris_cloud_diagnostics.py` 与 `docs/knowledge/venusws63/cloud-control-version-gate.md`：先查 `Project Version`，再查 `env=1/2` 是否匹配 UAT/SIT，再查 IoT ID/在线态，最后看云端业务码。
 - Cucumber 执行进程会注入 `POLARIS_ENV_FILE`，doc case / network helper 会按当前项目配置读取 UAT/SIT、串口、声卡和设备信息，不再依赖根 `active_project`。
 - `run_kernel_scene.py` 支持 `--retry-blocked`，长链路节点遇到声卡/语音链路瞬态 `BLOCKED` 时可配合 `--max-retries` 自动复跑。
 - 在线全双工 Runtime 断言已区分 setup/recovery 阶段和主流程：联网恢复阶段重启不直接计入固件失败；Wake->Command 断言要求存在有效事件对，避免 setup 噪声导致误判。
 - 媒体/TTS Oracle v1 已过滤 PA 正常关闭超时日志，并继续明确限制：未配置 loopback/capture 时只证明日志级响应，不声称真实声学出声。
+- 声学回采 oracle MVP 已提供 `probe/self-test/record/analyze`：没有 `sounddevice/numpy` 或未配置回采设备时输出 `BLOCKED`，不会伪造真实出声 PASS。
+- failure-to-test-case 已分成两段：`generate_failure_case.py` 只生成候选；`register_failure_case.py --approve --approved-by <name>` 才会把候选写入 `references/failure_regression_registry.json`、`tasks/generated/regression/`、`references/scenes/generated_failure_regression.scene.example.json` 和 `docs/wiki/voice-validation/failure-patterns/`。

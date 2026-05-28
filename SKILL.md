@@ -126,7 +126,9 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 - L1 功能必须优先复用 `tasks/examples/` 中的标准 task；批量能力可走 `references/scenes/l1_voice_core_supported_smoke.scene.example.json`。
 - 用户给新需求时，先用 `generate_requirement_package.py` 生成 `test_plan.md`、`case_matrix.md`、`gap_list.md`、`confirmation.md`、`run_plan.json`，确认后再 execute。
 - 真机失败后不要只口头分析，优先执行 `generate_failure_case.py --run <run>`，把失败转成候选回归用例、断言补强建议和复测清单。
+- 候选失败用例不能直接落库；必须经人工确认后执行 `register_failure_case.py --package <failure_case_package.json> --approve --approved-by <name>`，再写入 `failure_regression_registry.json`、`tasks/generated/regression/`、`generated_failure_regression.scene.example.json` 和 failure-pattern wiki。
 - 在线媒体/TTS/MP3 响应必须至少跑日志级 `analyze_media_response_oracle.py`；没有 loopback/capture 时只能说“日志显示播报链路”，不能说“真实声学播放通过”。
+- 需要证明真实出声时使用 `tools/audio/polaris_acoustic_oracle.py`：先 `probe` 查回采设备，再 `record` 或 `analyze --audio-file <capture.wav>`，报告 RMS、峰值、有效时长和削波；依赖或设备缺失时必须判 `BLOCKED`。
 - `build_validation_summary_report.py` 是总报告入口，会汇总 BDD、Runtime、Event Graph、媒体 oracle、重启/崩溃和未通过项。
 - WB01/WS63 项目私有 Event Graph rule 和 coverage 阈值在 `references/optimization/event_graph_rules.json`、`state_assertion_policy.json` 中维护；新项目不要硬编码到脚本里。
 
@@ -134,6 +136,7 @@ docs/intake/<project_id>/<YYYYMMDD_topic>/
 
 - 执行前置串口/云控/联网 Adapter 时，必须优先使用当前任务传入的 `--env-file`；涉及串口直接写入时使用 `--no-sync-config`，避免项目串口互相污染。
 - 云控设置不只看 HTTP 状态码，还要看业务返回码；设备未上线、环境不一致、业务码非 0/200 时应归为 `BLOCKED` 或环境问题，不能写成 PASS。
+- WS63 云控失败先按版本/环境/在线态排查：`version` 中 `Project Version=35.03.01.01.18.26.05.04.00.02` 属于已知后台未授权 API 控制版本，应切到 `35.03.01.01.18.26.05.04.00.01`，再确认 `env=1`(UAT) 或 `env=2`(SIT) 与 `cloud.api_environment` 一致；诊断工具为 `tools/cloud/polaris_cloud_diagnostics.py`，知识文档为 `docs/knowledge/venusws63/cloud-control-version-gate.md`。
 - Cucumber 子进程通过 `POLARIS_ENV_FILE` 继承项目配置；新增项目时要保证该配置文件包含串口、声卡、UAT/SIT 和基础网络字段。
 - 长 scene 可使用 `--max-retries N --retry-blocked` 处理声卡、语音识别或云端瞬态阻塞；重试后仍失败才进入 failure-to-test-case 反哺。
 - 全双工断言应区分 setup/recovery 与主流程，不把前置联网恢复重启误判为固件重启；顺序断言使用有效事件对而不是全局第一个噪声事件。

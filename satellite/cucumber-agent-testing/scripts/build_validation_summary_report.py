@@ -137,6 +137,21 @@ def skipped_media_oracle(reason: str) -> Dict[str, Any]:
     return {"result": "SKIPPED", "attribution": "not_applicable", "reason": reason}
 
 
+def load_acoustic_oracle(run_dir: Path) -> Dict[str, Any]:
+    candidates = [
+        run_dir / "acoustic_oracle" / "acoustic_oracle.json",
+        run_dir / "media_oracle" / "acoustic_oracle.json",
+    ]
+    for candidate in candidates:
+        payload = load_json(candidate)
+        if payload:
+            return payload
+    nested = sorted(run_dir.rglob("acoustic_oracle.json"), key=lambda item: item.stat().st_mtime)
+    if nested:
+        return load_json(nested[-1]) or {"result": "ERROR", "reason": f"cannot parse {nested[-1]}"}
+    return {"result": "SKIPPED", "attribution": "not_configured", "reason": "未发现声学回采 oracle 产物；未配置 capture/loopback 时不能证明真实出声。"}
+
+
 def normalize_run(value: str) -> Dict[str, Any]:
     path = resolve_path(value)
     record_path = first_existing(path / "execution_record.json")
@@ -157,10 +172,13 @@ def normalize_run(value: str) -> Dict[str, Any]:
     mode = record.get("mode") or bdd_summary.get("mode", kernel_record.get("mode", ""))
     if kernel_scene and not record:
         media_oracle = skipped_media_oracle("scene 汇总目录不直接做媒体 oracle；媒体/TTS 需查看节点下真实 BDD run 或单独 media oracle 报告。")
+        acoustic_oracle = {"result": "SKIPPED", "attribution": "not_applicable", "reason": "scene 汇总目录不直接做声学回采 oracle。"}
     elif mode and mode != "execute":
         media_oracle = skipped_media_oracle(f"{mode} 模式未执行真实媒体链路。")
+        acoustic_oracle = {"result": "SKIPPED", "attribution": "not_applicable", "reason": f"{mode} 模式未执行真实声学链路。"}
     else:
         media_oracle = load_media_oracle(run_dir)
+        acoustic_oracle = load_acoustic_oracle(run_dir)
     result = record.get("result") or kernel_record.get("result") or kernel_scene.get("result") or summary_result(bdd_summary)
     project_id = project_from_record(record, bdd_summary, kernel_record)
     if not project_id and kernel_scene:
@@ -169,7 +187,7 @@ def normalize_run(value: str) -> Dict[str, Any]:
             if node_record.get("project_id"):
                 project_id = str(node_record.get("project_id"))
                 break
-    return {"input": rel(path), "optimized": bool(record), "task_id": record.get("task_id", kernel_record.get("task_id", kernel_scene.get("scene_id", ""))), "project_id": project_id, "mode": mode, "result": result or "UNKNOWN", "stability": record.get("stability", ""), "run_dir": rel(run_dir), "record_path": rel(record_path) if record_path else "", "scenario_results": scenario_results, "runtime_summary": runtime_summary, "runtime_event_counts": runtime_event_counts(runtime_summary), "media_oracle": media_oracle, "evidence": collect_evidence(run_dir, scenario_results)}
+    return {"input": rel(path), "optimized": bool(record), "task_id": record.get("task_id", kernel_record.get("task_id", kernel_scene.get("scene_id", ""))), "project_id": project_id, "mode": mode, "result": result or "UNKNOWN", "stability": record.get("stability", ""), "run_dir": rel(run_dir), "record_path": rel(record_path) if record_path else "", "scenario_results": scenario_results, "runtime_summary": runtime_summary, "runtime_event_counts": runtime_event_counts(runtime_summary), "media_oracle": media_oracle, "acoustic_oracle": acoustic_oracle, "evidence": collect_evidence(run_dir, scenario_results)}
 
 
 def build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -177,6 +195,7 @@ def build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     by_project: Dict[str, Dict[str, int]] = {}
     scenario_counts: Dict[str, Dict[str, int]] = {}
     media_counts: Dict[str, int] = {}
+    acoustic_counts: Dict[str, int] = {}
     stability = {"RebootDetected": 0, "CrashDetected": 0}
     non_pass: List[Dict[str, Any]] = []
     for item in items:
@@ -186,6 +205,8 @@ def build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
         by_project.setdefault(project, {})[result] = by_project.setdefault(project, {}).get(result, 0) + 1
         media_result = str((item.get("media_oracle", {}) or {}).get("result", "UNKNOWN"))
         media_counts[media_result] = media_counts.get(media_result, 0) + 1
+        acoustic_result = str((item.get("acoustic_oracle", {}) or {}).get("result", "UNKNOWN"))
+        acoustic_counts[acoustic_result] = acoustic_counts.get(acoustic_result, 0) + 1
         events = item.get("runtime_event_counts", {}) if isinstance(item.get("runtime_event_counts"), dict) else {}
         for key in stability:
             stability[key] += int(events.get(key, 0) or 0)
@@ -195,7 +216,7 @@ def build_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
             scenario_counts.setdefault(sid, {})[sres] = scenario_counts.setdefault(sid, {}).get(sres, 0) + 1
             if sres != "PASS":
                 non_pass.append({"run_dir": item.get("run_dir", ""), "scenario_id": sid, "result": sres, "attribution": scenario.get("attribution", ""), "reason": scenario.get("reason", "")})
-    return {"schema": "polaris.validation_summary_report.v2", "generated_at": now_iso(), "total": len(items), "counts": counts, "by_project": by_project, "scenario_counts": scenario_counts, "media_oracle_counts": media_counts, "stability_event_counts": stability, "non_pass_items": non_pass, "runs": items}
+    return {"schema": "polaris.validation_summary_report.v2", "generated_at": now_iso(), "total": len(items), "counts": counts, "by_project": by_project, "scenario_counts": scenario_counts, "media_oracle_counts": media_counts, "acoustic_oracle_counts": acoustic_counts, "stability_event_counts": stability, "non_pass_items": non_pass, "runs": items}
 
 
 def json_text(value: Any) -> str:
@@ -223,21 +244,24 @@ def recommended_actions(summary: Dict[str, Any]) -> List[str]:
 
 
 def render_markdown(summary: Dict[str, Any]) -> str:
-    lines = ["# Polaris 验证总报告", "", f"- 生成时间：`{summary.get('generated_at')}`", f"- 总 run 数：`{summary.get('total')}`", f"- 结果分布：`{json_text(summary.get('counts', {}))}`", f"- 媒体 Oracle 分布：`{json_text(summary.get('media_oracle_counts', {}))}`", f"- 稳定性事件：`{json_text(summary.get('stability_event_counts', {}))}`", "", "## 按项目汇总", "", "| 项目 | 结果分布 |", "| --- | --- |"]
+    lines = ["# Polaris 验证总报告", "", f"- 生成时间：`{summary.get('generated_at')}`", f"- 总 run 数：`{summary.get('total')}`", f"- 结果分布：`{json_text(summary.get('counts', {}))}`", f"- 媒体 Oracle 分布：`{json_text(summary.get('media_oracle_counts', {}))}`", f"- 声学 Oracle 分布：`{json_text(summary.get('acoustic_oracle_counts', {}))}`", f"- 稳定性事件：`{json_text(summary.get('stability_event_counts', {}))}`", "", "## 按项目汇总", "", "| 项目 | 结果分布 |", "| --- | --- |"]
     for project, project_counts in sorted((summary.get("by_project", {}) or {}).items()):
         lines.append(f"| {project} | `{json_text(project_counts)}` |")
     lines += ["", "## 按场景汇总", "", "| 场景 | 结果分布 |", "| --- | --- |"]
     for scenario, counts in sorted((summary.get("scenario_counts", {}) or {}).items()):
         lines.append(f"| `{scenario}` | `{json_text(counts)}` |")
-    lines += ["", "## 运行明细", "", "| 项目 | 任务/场景 | 模式 | 结果 | 稳定性 | 媒体 Oracle | run_dir |", "| --- | --- | --- | --- | --- | --- | --- |"]
+    lines += ["", "## 运行明细", "", "| 项目 | 任务/场景 | 模式 | 结果 | 稳定性 | 媒体 Oracle | 声学 Oracle | run_dir |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for item in summary.get("runs", []):
         media = item.get("media_oracle", {}) if isinstance(item.get("media_oracle"), dict) else {}
-        lines.append(f"| {item.get('project_id','')} | {item.get('task_id','')} | {item.get('mode','')} | `{item.get('result','')}` | `{item.get('stability','')}` | `{media.get('result','')}` | `{item.get('run_dir','')}` |")
+        acoustic = item.get("acoustic_oracle", {}) if isinstance(item.get("acoustic_oracle"), dict) else {}
+        lines.append(f"| {item.get('project_id','')} | {item.get('task_id','')} | {item.get('mode','')} | `{item.get('result','')}` | `{item.get('stability','')}` | `{media.get('result','')}` | `{acoustic.get('result','')}` | `{item.get('run_dir','')}` |")
     lines += ["", "## 场景与证据", ""]
     for item in summary.get("runs", []):
         lines.append(f"### {item.get('project_id') or 'unknown'} / {item.get('task_id') or 'run'}")
         media = item.get("media_oracle", {}) if isinstance(item.get("media_oracle"), dict) else {}
+        acoustic = item.get("acoustic_oracle", {}) if isinstance(item.get("acoustic_oracle"), dict) else {}
         lines.append(f"- media_oracle：`{media.get('result','')}` / `{media.get('attribution','')}`，{short(media.get('reason',''))}")
+        lines.append(f"- acoustic_oracle：`{acoustic.get('result','')}` / `{acoustic.get('attribution','')}`，{short(acoustic.get('reason',''))}")
         for scenario in item.get("scenario_results", []):
             runtime = scenario.get("runtime_replay", {}) if isinstance(scenario.get("runtime_replay"), dict) else {}
             metrics = scenario.get("metrics", {}) if isinstance(scenario.get("metrics"), dict) else {}
@@ -255,7 +279,7 @@ def render_markdown(summary: Dict[str, Any]) -> str:
     lines += ["## 下一步建议", ""]
     for action in recommended_actions(summary):
         lines.append(f"- {action}")
-    lines += ["", "## 判定口径", "", "- `PASS`：真机动作、业务证据、Runtime 断言和稳定性均通过。", "- `FAIL`：前置有效但功能证据明确不满足，进入固件/设备/ASR/云端问题分析。", "- `BLOCKED`：串口、声卡、PA、联网、云环境或资料导致本轮不能有效判定。", "- `TIMING_AMBIGUOUS`：注入点或超时窗口不可证明，不直接判固件失败。", "- 媒体 Oracle v1 为日志/事件级判断；未配置 loopback/capture 时不声称真实声学出声。"]
+    lines += ["", "## 判定口径", "", "- `PASS`：真机动作、业务证据、Runtime 断言和稳定性均通过。", "- `FAIL`：前置有效但功能证据明确不满足，进入固件/设备/ASR/云端问题分析。", "- `BLOCKED`：串口、声卡、PA、联网、云环境或资料导致本轮不能有效判定。", "- `TIMING_AMBIGUOUS`：注入点或超时窗口不可证明，不直接判固件失败。", "- 媒体 Oracle v1 为日志/事件级判断；未配置 loopback/capture 时不声称真实声学出声。", "- 声学 Oracle 只证明回采声学信号达到阈值，不替代 ASR/语义/设备业务断言。"]
     return "\n".join(lines) + "\n"
 
 
