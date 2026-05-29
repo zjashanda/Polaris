@@ -31,3 +31,11 @@ WB01、WS63 或新项目的日志 marker、云端媒体字段、TTS/MP3 播放�
 ## 5. 不能直接判完成的情况
 
 如果只有需求描述、没有真实日志，不能启用强规则；只能保留 disabled overlay、文档缺口和待复测任务。
+
+## 6. 结构化 overlay 文件
+
+新增 `satellite/cucumber-agent-testing/references/project_marker_overlays.json` 作为项目私有 marker 的结构化入口：
+
+- `cskwb01`：沉淀 CP/AP/ASR 三端 wake、offline/online ASR、本地 keyword、弱执行 ACK marker。
+- `venusws63`：沉淀 AP+upper wake、`online_asr_callbak`、`MSpeech Cloud 3 evt`、`DeviceControl`、`TTS url is null/no valid tts url` 等 marker。
+- 该文件只定义 marker 与 coverage policy；是否升级为强断言，仍需要真实日志、回归样本或项目文档佐证。

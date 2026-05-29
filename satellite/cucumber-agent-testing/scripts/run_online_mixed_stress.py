@@ -40,6 +40,7 @@ from tools.core.polaris_adapter_bridge import (  # noqa: E402
     stop_serial_logger_adapter,
 )
 from tools.core.polaris_runtime import session_live_file  # noqa: E402
+from tools.logs.polaris_interaction_trace import extract_interaction_trace  # noqa: E402
 
 
 DEFAULT_STRATEGY = BDD_ROOT / "references" / "scene_strategy_pool.json"
@@ -54,6 +55,7 @@ CP_COMMAND_KEYWORD_RE = re.compile(r"WAKE\(0\).*?KEY=\d+\(([^)]*)\)", re.I)
 ALGO_COMMAND_KEYWORD_RE = re.compile(r'"keyword"\s*:\s*"([^"]*)"', re.I)
 LOCAL_ASR_KEYWORD_RE = re.compile(r"ignore local asr\s+(.+?)\s+when cloud connected", re.I)
 PUNCT_OR_SPACE_RE = re.compile(r"[\s，。！？、,.!?:：;；\"'“”‘’（）()\[\]{}<>《》]+")
+MOJIBAKE_HINT_RE = re.compile(r"[\u00e5\u00e6\u00e7\u00e4\u00e9\u00e8\u00e3\u00ef\ufffd\u6c13\u5fd9\u83bd\u76f2\u8305\u732b\u832b\u8302\u951f\u7d94]" r"|(\u677c\u626e\u77c6|\u5a11\u65bf\u724a|\u59b2\u6401\u5d37|\u9361\u6b91|\u93cd\u3127\u6443|\u8f70\u7c88|\u6d94\u581f|\u69f8\u9366|\u55d9\u6b91|\u6828\u74d5)")
 TTS_RE = re.compile(r"(TTS playing|TTS recv|ttsplayer play|wakeup_tts_callback|shortplayer status|cloud\.instructions\.audioBroadcast|tone player)", re.I)
 CLOUD_REPLY_RE = re.compile(r"(cloud\.speech\.reply|cloud\.instructions|MSpeech Cloud 4 evt|MSpeech Cloud 32 evt)", re.I)
 MEDIA_PLAY_RE = re.compile(r"(ttsplayer play|play audio https?://|player\".*\"status\":\"play\"|ttsplayer report state: play|TTS playing)", re.I)
@@ -72,6 +74,31 @@ BOOT_RE = re.compile(
 )
 BOOT_IGNORE_RE = re.compile(r"ignore exception", re.I)
 SERIAL_ERR_RE = re.compile(r"LOGGER_ERROR", re.I)
+LATENCY_FIELDS = [
+    "wake_to_recognition_ms",
+    "wake_to_cloud_request_ms",
+    "wake_to_first_cloud_response_ms",
+    "wake_to_tts_start_ms",
+    "wake_to_media_start_ms",
+    "cloud_request_to_recognition_ms",
+    "recognition_to_cloud_request_ms",
+    "cloud_request_to_first_cloud_response_ms",
+    "cloud_request_to_audio_broadcast_ms",
+    "cloud_request_to_speech_reply_ms",
+    "cloud_request_to_tts_start_ms",
+    "cloud_request_to_media_start_ms",
+    "recognition_to_first_cloud_response_ms",
+    "recognition_to_audio_broadcast_ms",
+    "recognition_to_speech_reply_ms",
+    "recognition_to_tts_start_ms",
+    "recognition_to_media_start_ms",
+    "first_cloud_response_to_tts_start_ms",
+    "first_cloud_response_to_media_start_ms",
+    "audio_broadcast_to_tts_start_ms",
+    "audio_broadcast_to_media_start_ms",
+    "tts_start_to_media_start_ms",
+    "tts_or_media_play_duration_ms",
+]
 
 
 def now_iso() -> str:
@@ -85,6 +112,14 @@ def stamp() -> str:
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def first_latency_value(metrics: Dict[str, Any], key: str) -> Any:
+    for sample in metrics.get("latency_samples") or []:
+        latency = sample.get("latency", {}) if isinstance(sample, dict) else {}
+        if isinstance(latency, dict) and latency.get(key) not in (None, ""):
+            return latency.get(key)
+    return ""
 
 
 def smart_decode(data: bytes) -> str:
@@ -121,6 +156,7 @@ class CapturedLine:
     port: str
     name: str
     text: str
+    line_no: int = 0
 
 
 @dataclass
@@ -139,7 +175,10 @@ class HarnessLogReader:
         self.name = name
         self.port = port
         self.baudrate = baudrate
-        self.log_path = session_live_file(f"{port}.log", session_dir=session_dir)
+        # The serial logger writes under session/logs/live.  Resolve the live
+        # path up front, otherwise a freshly created session falls back to the
+        # legacy session/COMxx.log path and every round is misread as silent.
+        self.log_path = session_live_file(f"{port}.log", session_dir=session_dir, create=True)
         self.state = SerialState(name=name, port=port, baudrate=baudrate)
 
     def start(self) -> None:
@@ -181,7 +220,7 @@ class HarnessLogReader:
                     mono = datetime.fromisoformat(wall).timestamp() + (index / 1000000.0)
                 except ValueError:
                     mono = float(index)
-                entries.append(CapturedLine(wall=wall, mono=mono, port=self.port, name=self.name, text=text))
+                entries.append(CapturedLine(wall=wall, mono=mono, port=self.port, name=self.name, text=text, line_no=index + 1))
                 if "LOGGER_ERROR" in text:
                     self.state.last_error = text
         self.state.line_count = len(entries)
@@ -278,32 +317,78 @@ def normalize_recognition_text(text: str) -> str:
 
 
 def recognition_matches_expected(observed: str, expected_values: Iterable[str]) -> bool:
-    observed_norm = normalize_recognition_text(observed)
-    if not observed_norm:
+    observed_norms = [normalize_recognition_text(value) for value in mojibake_variants(observed)]
+    observed_norms = [value for value in observed_norms if value]
+    if not observed_norms:
         return True
     for expected in expected_values:
-        expected_norm = normalize_recognition_text(expected)
-        if not expected_norm:
-            continue
-        if observed_norm == expected_norm or observed_norm in expected_norm or expected_norm in observed_norm:
-            return True
+        expected_norms = [normalize_recognition_text(value) for value in mojibake_variants(expected)]
+        expected_norms = [value for value in expected_norms if value]
+        for observed_norm in observed_norms:
+            for expected_norm in expected_norms:
+                if observed_norm == expected_norm or observed_norm in expected_norm or expected_norm in observed_norm:
+                    return True
     return False
+
+
+def mojibake_variants(text: str) -> List[str]:
+    raw = str(text or "")
+    variants = [raw]
+    for encoding in ("latin1", "cp1252"):
+        try:
+            recovered = raw.encode(encoding).decode("utf-8")
+        except Exception:
+            continue
+        if recovered and recovered not in variants:
+            variants.append(recovered)
+    return variants
+
+
+def looks_like_mojibake(text: str) -> bool:
+    return bool(MOJIBAKE_HINT_RE.search(str(text or "")))
 
 
 def find_unexpected_texts(observed_values: Iterable[str], expected_values: Iterable[str]) -> List[str]:
     expected_list = list(expected_values)
+    has_expected_match = any(recognition_matches_expected(observed, expected_list) for observed in observed_values)
     unexpected: List[str] = []
     for observed in observed_values:
         text = str(observed or "").strip()
         if not text:
             continue
         if not recognition_matches_expected(text, expected_list) and text not in unexpected:
+            # Some firmware logs contain the same cloud ASR twice: one line is
+            # valid UTF-8 and another is mojibake.  If this round already has a
+            # clean expected match, do not count the mojibake duplicate as a
+            # false recognition.
+            if has_expected_match and looks_like_mojibake(text):
+                continue
             unexpected.append(text)
     return unexpected
 
 
 def entries_to_lines(entries: Iterable[CapturedLine]) -> List[str]:
     return [f"{item.wall} [{item.port}/{item.name}] {item.text}" for item in entries]
+
+
+def is_media_error_line(text: str) -> bool:
+    if "PA_MGR" in text and "Refresh PA to OFF" in text:
+        return False
+    return bool(MEDIA_ERROR_RE.search(text))
+
+
+def count_media_errors(entries: Iterable[CapturedLine]) -> int:
+    return sum(1 for item in entries if is_media_error_line(item.text))
+
+
+def sample_media_errors(entries: Iterable[CapturedLine], limit: int = 10) -> List[str]:
+    samples: List[str] = []
+    for item in entries:
+        if is_media_error_line(item.text):
+            samples.append(f"{item.wall} [{item.port}/{item.name}] {item.text}")
+            if len(samples) >= limit:
+                break
+    return samples
 
 
 class StressRunner:
@@ -497,6 +582,13 @@ class StressRunner:
                 "expected_utterances",
                 "unexpected_asr_texts",
                 "unexpected_recognition_count",
+                "asr_pinyin_texts",
+                "online_mids",
+                "online_session_ids",
+                "online_record_ids",
+                *LATENCY_FIELDS,
+                "latency_samples",
+                "wake_recognition_pairs",
                 "observe_s",
                 "next_gap_s",
                 "reason",
@@ -624,6 +716,7 @@ class StressRunner:
         ap_entries = [item for item in entries if item.name == "ap"]
         cp_entries = [item for item in entries if item.name == "cp"]
         asr_entries = [item for item in entries if item.name == "asr"]
+        interaction_trace = extract_interaction_trace(entries_to_lines(entries))
         return {
             "line_count": len(entries),
             "ap_line_count": len(ap_entries),
@@ -638,11 +731,19 @@ class StressRunner:
             "cloud_reply_count": count_re(entries, CLOUD_REPLY_RE),
             "media_play_count": count_re(entries, MEDIA_PLAY_RE),
             "media_stop_count": count_re(entries, MEDIA_STOP_RE),
-            "media_error_count": count_re(entries, MEDIA_ERROR_RE),
+            "media_error_count": count_media_errors(entries),
             "boot_count": count_boot_or_crash(entries),
             "serial_error_count": count_re(entries, SERIAL_ERR_RE),
             "asr_texts": extract_texts(entries),
+            "asr_pinyin_texts": [
+                str(item.get("asr_pinyin", ""))
+                for item in interaction_trace.get("recognition_events", [])
+                if str(item.get("asr_pinyin", "")).strip()
+            ],
             "command_keywords": extract_command_keywords(entries),
+            "interaction_trace": interaction_trace,
+            "online_request_ids": interaction_trace.get("online_request_ids", []),
+            "latency_samples": interaction_trace.get("latency_samples", []),
             "samples": {
                 "wake": sample_re(entries, ANY_WAKE_RE),
                 "asr": sample_re(entries, ASR_RE),
@@ -650,7 +751,7 @@ class StressRunner:
                 "cloud_reply": sample_re(entries, CLOUD_REPLY_RE),
                 "media_play": sample_re(entries, MEDIA_PLAY_RE),
                 "media_stop": sample_re(entries, MEDIA_STOP_RE),
-                "media_error": sample_re(entries, MEDIA_ERROR_RE),
+                "media_error": sample_media_errors(entries),
                 "boot": sample_boot_or_crash(entries),
                 "serial_error": sample_re(entries, SERIAL_ERR_RE),
             },
@@ -793,6 +894,13 @@ class StressRunner:
                 "expected_utterances",
                 "unexpected_asr_texts",
                 "unexpected_recognition_count",
+                "asr_pinyin_texts",
+                "online_mids",
+                "online_session_ids",
+                "online_record_ids",
+                *LATENCY_FIELDS,
+                "latency_samples",
+                "wake_recognition_pairs",
                 "observe_s",
                 "next_gap_s",
                 "reason",
@@ -823,6 +931,17 @@ class StressRunner:
                 "expected_utterances": "|".join(metrics.get("expected_utterances") or []),
                 "unexpected_asr_texts": "|".join(metrics.get("unexpected_asr_texts") or []),
                 "unexpected_recognition_count": metrics.get("unexpected_recognition_count", 0),
+                "asr_pinyin_texts": "|".join(metrics.get("asr_pinyin_texts") or []),
+                "online_mids": "|".join(str(item.get("mid", "")) for item in (metrics.get("online_request_ids") or []) if item.get("mid")),
+                "online_session_ids": "|".join(str(item.get("sessionId", "")) for item in (metrics.get("online_request_ids") or []) if item.get("sessionId")),
+                "online_record_ids": "|".join(str(item.get("recordId", "")) for item in (metrics.get("online_request_ids") or []) if item.get("recordId")),
+                **{field: first_latency_value(metrics, field) for field in LATENCY_FIELDS},
+                "latency_samples": json.dumps((metrics.get("latency_samples") or [])[:5], ensure_ascii=False, separators=(",", ":")),
+                "wake_recognition_pairs": json.dumps(
+                    (metrics.get("interaction_trace") or {}).get("interactions", [])[:5],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
                 "observe_s": payload["observe_s"],
                 "next_gap_s": payload["next_gap_s"],
                 "reason": payload["reason"],
@@ -847,6 +966,8 @@ class StressRunner:
                 "result": item["result"],
                 "reason": item["reason"],
                 "unexpected_asr_texts": (item.get("metrics") or {}).get("unexpected_asr_texts", []),
+                "online_request_ids": (item.get("metrics") or {}).get("online_request_ids", []),
+                "latency_samples": (item.get("metrics") or {}).get("latency_samples", [])[:3],
             }
             for item in self.results[-10:]
         ]
@@ -882,6 +1003,17 @@ class StressRunner:
     def _write_final_summary(self, started_at: datetime, end_at: datetime) -> None:
         self._append_full_log_mirror()
         total_unexpected = sum(int((item.get("metrics") or {}).get("unexpected_recognition_count", 0) or 0) for item in self.results)
+        online_request_rounds = [
+            {
+                "round": item.get("round"),
+                "category": item.get("category"),
+                "phrase": item.get("phrase"),
+                "online_request_ids": (item.get("metrics") or {}).get("online_request_ids", []),
+                "latency_samples": (item.get("metrics") or {}).get("latency_samples", [])[:3],
+            }
+            for item in self.results
+            if (item.get("metrics") or {}).get("online_request_ids")
+        ]
         unexpected_rounds = [
             {
                 "round": item.get("round"),
@@ -905,6 +1037,8 @@ class StressRunner:
             "category_counts": self.category_counts,
             "anomaly_counts": self.anomaly_counts,
             "total_unexpected_recognition_count": total_unexpected,
+            "online_request_round_count": len(online_request_rounds),
+            "online_request_rounds": online_request_rounds[:200],
             "unexpected_recognition_rounds": unexpected_rounds[:200],
             "serial_states": [asdict(reader.state) for reader in self.readers],
             "log_files": [str(reader.log_path) for reader in self.readers],
@@ -974,10 +1108,14 @@ def apply_env_and_strategy_defaults(args: argparse.Namespace) -> argparse.Namesp
     audio = env_payload.get("audio") if isinstance(env_payload.get("audio"), dict) else {}
     device = env_payload.get("device") if isinstance(env_payload.get("device"), dict) else {}
     serial_cfg = env_payload.get("serial") if isinstance(env_payload.get("serial"), dict) else {}
+    project_type = str(env_payload.get("project_type", "") or "").strip().lower()
+    topology = str(serial_cfg.get("topology", "") or "").strip().lower()
 
     args.project_id = first_non_empty(args.project, env_payload.get("project_id"), nested(env_payload, "_config_source", "active_project"), "cskwb01")
     args.ap_port = first_non_empty(args.ap_port, ports.get("ap"), "COM14")
-    args.cp_port = first_non_empty(args.cp_port, ports.get("cp"), "COM13")
+    no_cp_project = project_type == "ws63" or "no_cp" in topology or args.project_id.lower() in {"venusws63", "ws63"}
+    default_cp = "" if no_cp_project else "COM13"
+    args.cp_port = first_non_empty(args.cp_port, ports.get("cp"), default_cp)
     args.asr_port = first_non_empty(args.asr_port, ports.get("asr"), ports.get("upper"), "COM12")
     args.control_port = first_non_empty(args.control_port, ports.get("control"), "COM15")
     args.data_baud = int(args.data_baud or serial_cfg.get("baudrate") or 115200)

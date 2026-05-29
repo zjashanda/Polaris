@@ -282,9 +282,54 @@ def build_media_windows(timeline: Timeline, *, max_duration_ms: int = 60000) -> 
     stops = [event for event in timeline.find("MediaCompleted") if event.timestamp_ms is not None]
     starts.sort(key=lambda item: int(item.timestamp_ms or 0))
     stops.sort(key=lambda item: int(item.timestamp_ms or 0))
+    used_starts: set[str] = set()
     used_stops: set[str] = set()
     windows: List[MediaWindow] = []
+
+    # Interrupt injection sidecars already contain paired self-play windows.
+    # Pair those by their declared duration first; otherwise generic serial
+    # player stop events can steal the stop marker and make the injection look
+    # falsely outside the self-play window.
     for start in starts:
+        if str(start.payload.get("timestamp_source", "")) != "interrupt_self_play_window":
+            continue
+        start_ms = int(start.timestamp_ms or 0)
+        expected_duration = _optional_int(start.payload.get("duration_ms"))
+        window_source = str(start.payload.get("window_source", "") or start.source)
+        candidates = []
+        for stop in stops:
+            if stop.event_id in used_stops:
+                continue
+            if str(stop.payload.get("timestamp_source", "")) != "interrupt_self_play_window":
+                continue
+            if str(stop.payload.get("window_source", "") or stop.source) != window_source:
+                continue
+            if stop.timestamp_ms is None or int(stop.timestamp_ms) <= start_ms:
+                continue
+            duration = int(stop.timestamp_ms) - start_ms
+            if duration > max_duration_ms:
+                continue
+            delta = abs(duration - expected_duration) if expected_duration is not None else duration
+            candidates.append((delta, duration, stop))
+        if not candidates:
+            continue
+        _delta, _duration, stop = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+        used_starts.add(start.event_id)
+        used_stops.add(stop.event_id)
+        windows.append(
+            MediaWindow(
+                index=len(windows),
+                start_ms=start_ms,
+                end_ms=int(stop.timestamp_ms or 0),
+                start_event_id=start.event_id,
+                end_event_id=stop.event_id,
+                source=normalize_source(window_source),
+            )
+        )
+
+    for start in starts:
+        if start.event_id in used_starts:
+            continue
         start_ms = int(start.timestamp_ms or 0)
         candidates = [
             stop

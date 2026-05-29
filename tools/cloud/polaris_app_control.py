@@ -139,7 +139,7 @@ def parse_deviceinfo(lines: List[str]) -> Dict[str, str]:
         clean = normalize_log_line(raw).strip()
         for prefix, key in FIELD_MAP.items():
             token = f"{prefix}:"
-            if clean.startswith(token):
+            if token in clean:
                 result[key] = clean.split(token, 1)[1].strip()
     return result
 

@@ -573,12 +573,12 @@ def cmd_send(args: argparse.Namespace) -> int:
         payload["mode"] = "session_queue"
         payload["session_dir"] = str(session_dir)
         append_queue(session_dir, payload)
-        print(json.dumps(payload, ensure_ascii=False))
+        print(json.dumps(payload, ensure_ascii=True))
         return 0
 
     output_dir = Path(args.output_dir).resolve() if args.output_dir else None
     direct_payload = direct_send_command(args.command, port, baudrate, role, output_dir=output_dir)
-    print(json.dumps(direct_payload, ensure_ascii=False))
+    print(json.dumps(direct_payload, ensure_ascii=True))
     if direct_payload.get("result") == "PASS":
         return 0
     return 3

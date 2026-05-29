@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -143,21 +144,32 @@ def execute_adapter_action(
                 stderr=subprocess.STDOUT,
             )
             assert proc.stdout is not None
-            try:
+            lock = threading.Lock()
+
+            def reader() -> None:
+                assert proc.stdout is not None
                 for raw in proc.stdout:
                     line = raw.rstrip("\n")
-                    lines.append(line)
-                    log.write(line + "\n")
-                    log.flush()
+                    with lock:
+                        lines.append(line)
+                        log.write(line + "\n")
+                        log.flush()
                     if line_callback is not None:
                         line_callback(line)
+
+            reader_thread = threading.Thread(target=reader, daemon=True)
+            reader_thread.start()
+            try:
                 returncode = proc.wait(timeout=timeout_s)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 returncode = proc.wait()
                 timeout_line = f"TIMEOUT after {timeout_s}s"
-                lines.append(timeout_line)
-                log.write(timeout_line + "\n")
+                with lock:
+                    lines.append(timeout_line)
+                    log.write(timeout_line + "\n")
+                    log.flush()
+            reader_thread.join(timeout=2)
         finished_at = datetime.now().isoformat(timespec="milliseconds")
         return AdapterActionResult(
             adapter_id,

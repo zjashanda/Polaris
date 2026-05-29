@@ -9,6 +9,16 @@
 - 命令词分母只统计“已成功唤醒后的有效命令样本”；未唤醒要先归前置，不混入命令识别率。
 - 断言既看 ASR/keyword/command marker，也要看期望动作或 TTS/media 响应；没有动作 oracle 时只能标记 `NEEDS_REVIEW` 或 exploratory。
 - 未播放目标命令却出现命令识别，必须记录为误识别候选。
+- 设备控制类命令必须读取 `control-command-actuator-beep-assertion.md`：识别、控制回复、TTS/播报、执行/蜂鸣器反馈要分段断言；蜂鸣器是否应响取决于命令和当前状态，不能简单强制必响。
+
+## 2026-05-28 FA2 全量基线执行口径
+
+- 数据：`docs/fa2命令词.txt`，共 343 条。
+- 执行方式：split wake，先播放“小美小美”，间隔 1600ms 后播放命令词，观察 9000ms。
+- WB01 结果：PASS=147、PASS_WITH_WARNINGS=145、FAIL=51；主要 FAIL 是目标未命中或被其他命令串扰，主要 WARN 是目标已命中但有额外识别。
+- WS63 结果：PASS=161、PASS_WITH_WARNINGS=174、FAIL=8；主要 WARN 是控制链路可见但 TTS URL 为空/播报未闭环。
+- 聚合证据：`satellite/cucumber-agent-testing/debug/goal_command_beep/20260528_201015/aggregate/fa2_full_baseline_aggregate.json`。
+- 失败子集复验：WS63 baseline 8 条 FAIL 复验后稳定 FAIL=0；WB01 baseline 51 条 FAIL 经过复验和同义词 oracle 修正后稳定 FAIL=1（`调温循环扇反集`）。最终证据：`satellite/cucumber-agent-testing/debug/goal_command_beep/20260528_201015/aggregate/fa2_full_command_final_summary.json`。
 
 ## 原始方法沉淀
 
@@ -97,3 +107,12 @@
 - 关注结果：平均值、最大值、最小值、明显慢样本。
 - 统计公式：平均响应时间 = 成功样本响应时间总和 / 成功样本数。
 - 统计结果：命令词响应时间平均值、最大值、最小值、超阈值样本清单。
+
+## FA2 同义词库与蜂鸣器期望表
+
+2026-05-29 已把 FA2 命令断言相关口径拆成两个可维护入口：
+
+- 同义词/项目词表口径：`satellite/cucumber-agent-testing/references/command_aliases/fa2_command_aliases.json`。
+- 343 条命令蜂鸣器规则期望表：`docs/wiki/voice-validation/fa2-command-beep-expectation.json`、`docs/wiki/voice-validation/fa2-command-beep-expectation.csv`、`docs/wiki/voice-validation/fa2-command-beep-expectation.md`。
+
+注意：蜂鸣器期望表是规则表，不是物理蜂鸣器实测表。录音/声学回采未落地时，缺少明确 `beep/buzzer/蜂鸣`、项目私有执行 ACK 或人工标注，不能声称物理蜂鸣器已响。

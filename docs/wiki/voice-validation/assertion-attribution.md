@@ -41,3 +41,28 @@
 - API 返回成功但设备端未切到 UAT/SIT：归环境不一致或配置链路。
 - 在线媒体云端有回复但设备无播放 start/complete：归媒体链路，需要日志和回采 oracle 进一步确认。
 - 未播放目标语音却出现 wake/ASR/command：记录为误唤醒/误识别候选。
+- 控制命令没有蜂鸣器：不能直接判控制失败。必须先看响应语义和当前状态；已处于目标状态、查询、不支持或拒绝类响应可以不要求蜂鸣器。
+- 控制命令有 `DeviceControl` 回复但 `TTS url is null`：识别/控制回复可以 PASS 或 PASS_WITH_WARNINGS，TTS/播报段单独 FAIL/WARN，不能把播报缺失混成控制失败。
+
+## 5. 控制命令分段状态
+
+控制命令结果必须同时输出四段：
+
+| 分段 | 典型状态 | 说明 |
+| --- | --- | --- |
+| `recognition` | PASS/FAIL/WARN | 目标命令文本、拼音或本地关键词是否命中；额外识别要记录为串扰候选。 |
+| `control_reply` | PASS/FAIL/WARN/NOT_REQUIRED | 云端 `DeviceControl` 或本地控制关键词是否出现。 |
+| `tts_response` | PASS/FAIL/WARN/UNKNOWN/NOT_REQUIRED | TTS URL、播放器、媒体状态或声学回采是否证明播报。 |
+| `actuator_feedback` | PASS/WARN/UNKNOWN/NOT_EXPECTED/NOT_REQUIRED | 蜂鸣器、执行 ACK、声学回采或人工标注是否证明物理执行。 |
+
+详见 `docs/wiki/voice-validation/control-command-actuator-beep-assertion.md`。
+
+## WS63 TTS 空 URL 归因
+
+WS63 上如果观察到 `DeviceControl` / `cloud.instructions.audioBroadcast` / `cloud.speech.reply`，但同时出现 `TTS url is null` 或 `no valid tts url`，应拆分为：
+
+- `control_reply=PASS`：控制回复有证据。
+- `tts_response=FAIL/WARN`：播报链路未闭环。
+- 整体通常为 `PASS_WITH_WARNINGS/tts_response_chain`，不能直接归为识别失败或控制失败。
+
+详细模式见：`docs/wiki/voice-validation/failure-patterns/ws63-devicecontrol-empty-tts-url.md`。

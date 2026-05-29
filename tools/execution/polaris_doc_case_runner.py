@@ -39,7 +39,7 @@ from tools.execution.polaris_case_runner import (
 from tools.library.polaris_doc_case_lib import MODE_OFFLINE, SUPPORTED_DOC_CASES, StepToken, default_doc_xlsx, load_doc_case, parse_tone_catalog
 from tools.device.polaris_network_orchestrator import collect_window as collect_network_window
 from tools.device.polaris_network_orchestrator import command_window as network_command_window
-from tools.core.polaris_config import read_env_config
+from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports, read_env_config
 from tools.core.polaris_runtime import current_session_dir, new_artifact_dir, parse_prefixed_timestamp, queue_command, read_lines_between, workspace_root
 from tools.probe.polaris_state_probe import diff_states, snapshot
 
@@ -263,6 +263,107 @@ def current_runtime_env_config() -> dict:
     if env_file:
         return load_cloud_env_payload(env_file)
     return read_env_config()
+
+
+def active_project_payload() -> dict:
+    env = current_runtime_env_config()
+    active = str(env.get("active_project") or env.get("project_id") or "").strip()
+    projects = env.get("projects", {}) if isinstance(env.get("projects"), dict) else {}
+    project = projects.get(active, {}) if active else {}
+    return project if isinstance(project, dict) and project else env
+
+
+def project_has_cp_log() -> bool:
+    project = active_project_payload()
+    serial = project.get("serial", {}) if isinstance(project.get("serial"), dict) else {}
+    ports = serial.get("ports", {}) if isinstance(serial.get("ports"), dict) else {}
+    assertion_profile = str(project.get("assertion_profile") or "").strip().lower()
+    project_type = str(project.get("project_type") or "").strip().lower()
+    cp_port = str(ports.get("cp") or "").strip()
+    return bool(cp_port) and assertion_profile != "ap_upper_no_cp" and project_type not in {"ws63", "ap_wifi_control_no_cp"}
+
+
+def strip_wake_word_text(text: str) -> str:
+    cleaned = str(text or "").replace(WAKE_WORD_TEXT, "")
+    return cleaned.strip(" ，,。.!！?？、")
+
+
+def expected_online_texts_from_phase(phase: dict) -> List[str]:
+    texts: List[str] = []
+    for item in phase.get("sequence", []):
+        if not isinstance(item, dict) or item.get("type") != "tts":
+            continue
+        text = strip_wake_word_text(str(item.get("text") or ""))
+        if text:
+            append_unique(texts, normalize_online_asr_text(text))
+    return texts
+
+
+def split_wake_prefixed_sequence(sequence: List[dict], wake_gap_ms: int = 2500) -> List[dict]:
+    split: List[dict] = []
+    for item in sequence:
+        if not isinstance(item, dict) or item.get("type") != "tts":
+            split.append(item)
+            continue
+        text = str(item.get("text") or "")
+        command = strip_wake_word_text(text)
+        if WAKE_WORD_TEXT in text and command:
+            split.extend(
+                [
+                    {"type": "tts", "text": WAKE_WORD_TEXT},
+                    {"type": "silence", "duration_ms": wake_gap_ms},
+                    {"type": "tts", "text": command},
+                ]
+            )
+        else:
+            split.append(item)
+    return split
+
+
+def adapt_phase_for_current_project(phase: dict) -> dict:
+    if project_has_cp_log():
+        return phase
+    adapted = dict(phase)
+    metadata = dict(adapted.get("metadata", {}) if isinstance(adapted.get("metadata"), dict) else {})
+    metadata["assertion_profile_adapter"] = "ap_upper_no_cp"
+    if isinstance(adapted.get("sequence"), list):
+        split_sequence = split_wake_prefixed_sequence(adapted["sequence"])
+        if split_sequence != adapted["sequence"]:
+            metadata["split_wake_prefixed_tts_for_no_cp"] = True
+            adapted["sequence"] = split_sequence
+    if "min_cp_wake" in adapted:
+        adapted.setdefault("min_wb_online_wake", adapted.pop("min_cp_wake"))
+    if "min_ap_wake" in adapted:
+        adapted.setdefault("min_wb_online_wake", adapted.pop("min_ap_wake"))
+    if "min_cp_command" in adapted:
+        value = adapted.pop("min_cp_command")
+        adapted.setdefault("min_ap_cloud_tts_recv", value)
+    if "required_tones" in adapted:
+        adapted.setdefault("min_ap_cloud_tts_start", 1)
+        metadata["dropped_required_tones_for_no_cp"] = adapted.pop("required_tones")
+    if "forbidden_tones" in adapted:
+        metadata["dropped_forbidden_tones_for_no_cp"] = adapted.pop("forbidden_tones")
+    if "required_keywords" in adapted:
+        metadata["dropped_required_keywords_for_no_cp"] = adapted.pop("required_keywords")
+    if "forbidden_keywords" in adapted:
+        metadata["dropped_forbidden_keywords_for_no_cp"] = adapted.pop("forbidden_keywords")
+    adapted["metadata"] = metadata
+    return adapted
+
+
+def adapt_rules_for_current_project(rules: dict) -> dict:
+    if project_has_cp_log():
+        return rules
+    adapted = dict(rules)
+    if "min_cp_wake" in adapted:
+        adapted.setdefault("min_wb_online_wake", adapted.pop("min_cp_wake"))
+    if "min_ap_wake" in adapted:
+        adapted.setdefault("min_wb_online_wake", adapted.pop("min_ap_wake"))
+    if "min_cp_command" in adapted:
+        adapted.pop("min_cp_command")
+    if "min_unique_command_keywords" in adapted:
+        adapted.setdefault("min_ap_online_asr", adapted.pop("min_unique_command_keywords"))
+    return adapted
 
 
 def capture_cloud_deviceinfo(session_dir: Path) -> dict:
@@ -1421,6 +1522,13 @@ def evaluate_phase_checks(phase: dict, metrics: dict) -> List[dict]:
             f">={phase['min_ap_cloud_tts_play']}",
             metrics["ap_cloud_tts_play_count"] >= phase["min_ap_cloud_tts_play"],
         )
+    if "min_ap_cloud_tts_recv" in phase:
+        add_check(
+            "ap_cloud_tts_recv_count",
+            metrics["ap_cloud_tts_recv_count"],
+            f">={phase['min_ap_cloud_tts_recv']}",
+            metrics["ap_cloud_tts_recv_count"] >= phase["min_ap_cloud_tts_recv"],
+        )
     if "min_ap_cloud_tts_start" in phase:
         add_check(
             "ap_cloud_tts_start_count",
@@ -1505,6 +1613,8 @@ def execute_dialog_phase(
     session_dir: Path,
     tone_catalog: dict,
 ) -> dict:
+    original_phase = phase
+    phase = adapt_phase_for_current_project(phase)
     phase_dir = execution_dir / f"{index:02d}_{phase['id']}"
     phase_dir.mkdir(parents=True, exist_ok=True)
     audio_dir = phase_dir / "audio"
@@ -1518,9 +1628,11 @@ def execute_dialog_phase(
     end_dt = datetime.now()
 
     raw_logs: Dict[str, List[str]] = {}
-    for port in ["COM12", "COM13", "COM14"]:
+    for port in configured_log_ports():
         raw_logs[port] = read_lines_between(port, start_dt, end_dt, session_dir=session_dir)
+    add_canonical_log_aliases(raw_logs)
     clean_logs = sanitize_logs(raw_logs)
+    add_canonical_log_aliases(clean_logs)
     write_phase_logs(phase_dir, raw_logs, clean_logs)
 
     window_summary = summarize_window(clean_logs)
@@ -1557,6 +1669,8 @@ def execute_dialog_phase(
     }
     if "metadata" in phase:
         phase_payload["metadata"] = phase["metadata"]
+    if phase is not original_phase:
+        phase_payload["original_phase"] = original_phase
     (phase_dir / "phase_result.json").write_text(json.dumps(phase_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return phase_payload
 
@@ -1714,11 +1828,11 @@ def route_command(command: str) -> str:
 def collect_metrics(clean_logs: Dict[str, List[str]], window_summary: dict) -> dict:
     cp_command_keywords = extract_keywords(clean_logs.get("COM12", []), CP_CMD_KEYWORD_RE)
     ap_asr_keywords = extract_keywords(clean_logs.get("COM14", []), ASR_KEYWORD_RE)
-    ap_online_asr_texts = extract_keywords(
-        clean_logs.get("COM14", []),
-        AP_ONLINE_ASR_RE,
-        normalizer=normalize_online_asr_text,
-    )
+    ap_online_asr_texts: List[str] = []
+    for value in extract_keywords(clean_logs.get("COM14", []), AP_ONLINE_ASR_RE, normalizer=normalize_online_asr_text):
+        append_unique(ap_online_asr_texts, value)
+    for value in extract_keywords(clean_logs.get("COM13", []), AP_ONLINE_ASR_RE, normalizer=normalize_online_asr_text):
+        append_unique(ap_online_asr_texts, value)
     wb_asr_keywords = extract_split_keywords(
         clean_logs.get("COM13", []),
         ASR_KEYWORD_RE,
@@ -1964,6 +2078,7 @@ def evaluate_dialog_behavior_case(
     clean_logs: Dict[str, List[str]],
     setup_records: Optional[List[dict]] = None,
 ) -> Tuple[dict, dict]:
+    rules = adapt_rules_for_current_project(rules)
     metrics = payload["metrics"]
     actual_online_texts = [normalize_online_asr_text(item) for item in metrics["ap_online_asr_texts"]]
     required_online_texts, forbidden_online_texts = case_online_text_expectations(behavior_case)
@@ -2084,7 +2199,12 @@ def evaluate_dialog_behavior_case(
     all_passed = all(item["passed"] for item in checks)
     if all_passed:
         reason = rules["notes"]
-    elif metrics["cp_wake_count"] == 0 and metrics["ap_wake_count"] == 0:
+    elif (
+        metrics["cp_wake_count"] == 0
+        and metrics["ap_wake_count"] == 0
+        and metrics.get("wb_wake_count", 0) == 0
+        and metrics.get("wb_online_wake_count", 0) == 0
+    ):
         reason = "整段交互没有形成稳定 wake 证据，当前更像设备/音频链路问题而不是断言问题。"
     else:
         first_failed = next(item for item in checks if not item["passed"])
@@ -2492,12 +2612,13 @@ def evaluate_case(case, metrics: dict) -> dict:
 
 def read_clean_logs_from_execution(execution_dir: Path) -> Dict[str, List[str]]:
     clean_logs: Dict[str, List[str]] = {}
-    for port in ["COM12", "COM13", "COM14"]:
+    for port in configured_log_ports():
         path = execution_dir / "window_logs" / f"{port}.clean.log"
         if not path.exists():
             clean_logs[port] = []
             continue
         clean_logs[port] = read_serial_log_lines(path, errors="strict")
+    add_canonical_log_aliases(clean_logs)
     return clean_logs
 
 
@@ -2814,17 +2935,19 @@ def execute_standard_audio_case(case, rules: dict, execution_dir: Path, device_k
     state_diff = diff_states(before_state, after_state, state_dir / "state_diff.json")
 
     raw_logs: Dict[str, List[str]] = {}
-    for port in ["COM12", "COM13", "COM14"]:
+    for port in configured_log_ports():
         lines = read_lines_between(port, start_dt, end_dt, session_dir=session_dir)
         raw_logs[port] = lines
         (logs_dir / f"{port}.log").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    add_canonical_log_aliases(raw_logs)
     clean_logs = sanitize_logs(raw_logs)
+    add_canonical_log_aliases(clean_logs)
     for port, lines in clean_logs.items():
         (logs_dir / f"{port}.clean.log").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
     window_summary = summarize_window(clean_logs)
     metrics = collect_metrics(clean_logs, window_summary)
-    diagnosis = evaluate_case(case, metrics)
+    diagnosis = evaluate_case_with_rules(case, metrics, adapt_rules_for_current_project(SUPPORTED_DOC_CASES[case.case_id]))
     if playback_result["returncode"] != 0:
         diagnosis = {
             "result": "BLOCKED",

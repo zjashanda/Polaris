@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import json
 import os
 import re
 import sys
+import time
 import wave
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,6 +38,7 @@ if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
 
 from tools.audio.polaris_audio_builder import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH, ensure_tts_pcm, read_pcm, silence_pcm
+from tools.core.polaris_adapter_bridge import run_audio_playback_adapter
 from tools.core.polaris_config import add_canonical_log_aliases, configured_log_ports
 from tools.core.polaris_runtime import parse_prefixed_timestamp, read_lines_between
 from tools.execution.polaris_case_runner import sanitize_logs, summarize_window
@@ -164,6 +167,60 @@ def build_interrupt_audio(
     return manifest
 
 
+def build_precondition_audio(
+    output_wav: Path,
+    *,
+    wake_word: str,
+    prerequisite_phrase: str,
+    wake_gap_ms: int,
+) -> Dict[str, Any]:
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    combined = bytearray()
+    steps: List[Dict[str, Any]] = []
+    steps.append(append_tts(combined, wake_word))
+    steps.append(append_silence(combined, wake_gap_ms))
+    command_step = append_tts(combined, prerequisite_phrase)
+    steps.append(command_step)
+
+    with wave.open(str(output_wav), "wb") as handle:
+        handle.setnchannels(CHANNELS)
+        handle.setsampwidth(SAMPLE_WIDTH)
+        handle.setframerate(SAMPLE_RATE)
+        handle.writeframes(bytes(combined))
+
+    manifest = {
+        "output_wav": str(output_wav),
+        "wake_word": wake_word,
+        "prerequisite_phrase": prerequisite_phrase,
+        "wake_gap_ms": wake_gap_ms,
+        "duration_ms": pcm_duration_ms(combined),
+        "command_start_ms": command_step["start_ms"],
+        "command_end_ms": command_step["end_ms"],
+        "steps": steps,
+    }
+    output_wav.with_suffix(".json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def build_single_tts_audio(output_wav: Path, text: str) -> Dict[str, Any]:
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    combined = bytearray()
+    step = append_tts(combined, text)
+    with wave.open(str(output_wav), "wb") as handle:
+        handle.setnchannels(CHANNELS)
+        handle.setsampwidth(SAMPLE_WIDTH)
+        handle.setframerate(SAMPLE_RATE)
+        handle.writeframes(bytes(combined))
+    manifest = {
+        "output_wav": str(output_wav),
+        "text": text,
+        "duration_ms": pcm_duration_ms(combined),
+        "steps": [step],
+    }
+    output_wav.with_suffix(".json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
 def collect_logs(session_dir: Path, start: datetime, end: datetime, output_dir: Path) -> Dict[str, List[str]]:
     logs: Dict[str, List[str]] = {}
     logs_dir = output_dir / "window_logs"
@@ -214,6 +271,194 @@ def extract_cp_command_keywords(lines: Iterable[str], start: datetime, end: date
             if keyword and keyword not in keywords:
                 keywords.append(keyword)
     return keywords
+
+
+def determine_session_dir(selected_file: Path) -> Path:
+    session_dir = selected_file.resolve().parents[1] / "session"
+    bdd_run_dir = os.environ.get("POLARIS_BDD_RUN_DIR", "").strip()
+    if bdd_run_dir:
+        return Path(bdd_run_dir).resolve() / "session"
+    if session_dir.exists():
+        return session_dir
+    marker = WORKSPACE_ROOT / ".current_result_dir"
+    return Path(marker.read_text(encoding="utf-8").strip()) if marker.exists() else WORKSPACE_ROOT / "result"
+
+
+SELF_PLAY_START_RE = re.compile(r"tone player evt 2|ttsplayer report state:\s*play\s+2", re.I)
+
+
+def wait_for_line(
+    session_dir: Path,
+    port: str,
+    start: datetime,
+    regex: re.Pattern[str],
+    timeout_s: float,
+    *,
+    text_hint: str = "",
+) -> Optional[str]:
+    deadline = time.monotonic() + max(0.1, timeout_s)
+    seen: set[str] = set()
+    while time.monotonic() < deadline:
+        lines = read_lines_between(port, start, datetime.now() + timedelta(milliseconds=300), session_dir=session_dir)
+        for line in lines:
+            if line in seen:
+                continue
+            seen.add(line)
+            if not regex.search(line):
+                continue
+            if text_hint and text_hint not in line:
+                continue
+            return line
+        time.sleep(0.08)
+    return None
+
+
+def merge_playback_summary(
+    precondition: Dict[str, Any],
+    injection: Dict[str, Any],
+    *,
+    device_key: str,
+    log_path: Path,
+) -> Dict[str, Any]:
+    pre_rc = int(precondition.get("returncode", -1))
+    inj_rc = int(injection.get("returncode", -1))
+    return {
+        "cmd": ["sync-on-self-play", "precondition", "then", "injection"],
+        "returncode": 0 if pre_rc == 0 and inj_rc == 0 else (pre_rc if pre_rc != 0 else inj_rc),
+        "device_key": device_key,
+        "playback_device": injection.get("playback_device") or precondition.get("playback_device") or device_key,
+        "process_started_at": precondition.get("process_started_at") or precondition.get("playback_started_at"),
+        "playback_started_at": precondition.get("playback_started_at"),
+        "finished_at": injection.get("finished_at"),
+        "stdout_lines": [
+            "sync-on-self-play precondition playback finished",
+            "sync-on-self-play injection playback finished",
+        ],
+        "log_path": str(log_path),
+        "precondition_playback": precondition,
+        "injection_playback": injection,
+    }
+
+
+def run_playback_quick(audio_file: Path, device_key: str, output_dir: Path, timeout_s: int) -> dict:
+    """Play a short injection clip with probe skipped to reduce timing drift."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now()
+    capture = run_audio_playback_adapter(
+        audio_file,
+        str(device_key or "").strip(),
+        skip_probe=True,
+        timeout_s=timeout_s,
+        stream_log_path=output_dir / "play_combined.log",
+    )
+    finished_at = datetime.now()
+    payload = {
+        "cmd": list(capture.completed.args),
+        "returncode": capture.completed.returncode,
+        "device_key": str(device_key or "").strip(),
+        "playback_device": str(device_key or "").strip(),
+        "process_started_at": started_at.isoformat(timespec="milliseconds"),
+        "playback_started_at": capture.playback_started_at.isoformat(timespec="milliseconds"),
+        "finished_at": finished_at.isoformat(timespec="milliseconds"),
+        "stdout_lines": capture.stdout_lines or (capture.completed.stdout or "").splitlines(),
+        "log_path": str(output_dir / "play_combined.log"),
+        "adapter_executor": capture.action_result.to_dict(),
+    }
+    (output_dir / "playback.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
+
+
+def _load_listenai_play_module() -> Any:
+    script = Path.home() / ".codex" / "skills" / "listenai-play" / "scripts" / "listenai_play.py"
+    if not script.exists():
+        raise RuntimeError(f"listenai_play.py not found: {script}")
+    spec = importlib.util.spec_from_file_location("polaris_listenai_play", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import listenai_play.py: {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class PreparedPygamePlayback:
+    def __init__(self, audio_file: Path, device_key: str):
+        self.audio_file = audio_file
+        self.device_key = str(device_key or "").strip()
+        self.prepare_started_at = datetime.now()
+        module = _load_listenai_play_module()
+        os.environ["SDL_AUDIODRIVER"] = "directsound"
+        import pygame  # pylint: disable=import-outside-toplevel
+
+        device_name = ""
+        if self.device_key:
+            record = module.resolve_device_key("windows", self.device_key, direction="Render")
+            device_name = record.backend_target
+        init_kwargs = {
+            "frequency": SAMPLE_RATE,
+            "size": -16,
+            "channels": CHANNELS,
+            "buffer": 1024,
+            "allowedchanges": 0,
+        }
+        if device_name:
+            init_kwargs["devicename"] = device_name
+        pygame.mixer.init(**init_kwargs)
+        self._pygame = pygame
+        self.device_name = device_name
+        self.sound = pygame.mixer.Sound(str(audio_file))
+        self.prepare_finished_at = datetime.now()
+
+    def play(self, output_dir: Path) -> dict:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        started_at = datetime.now()
+        try:
+            channel = self.sound.play()
+            if channel is None:
+                raise RuntimeError("pygame failed to start prepared playback")
+            while channel.get_busy():
+                self._pygame.time.wait(20)
+            returncode = 0
+            stderr = ""
+        except Exception as exc:  # pragma: no cover - real device path
+            returncode = 2
+            stderr = str(exc)
+        finished_at = datetime.now()
+        payload = {
+            "cmd": ["prepared-pygame-playback", str(self.audio_file)],
+            "returncode": returncode,
+            "device_key": self.device_key,
+            "playback_device": self.device_name or self.device_key or "DEFAULT_RENDER_DEVICE",
+            "process_started_at": self.prepare_started_at.isoformat(timespec="milliseconds"),
+            "playback_started_at": started_at.isoformat(timespec="milliseconds"),
+            "finished_at": finished_at.isoformat(timespec="milliseconds"),
+            "stdout_lines": [
+                f"Prepared pygame playback on {self.device_name or 'default render device'}",
+                f"prepare_finished_at={self.prepare_finished_at.isoformat(timespec='milliseconds')}",
+            ],
+            "stderr": stderr,
+            "log_path": str(output_dir / "play_combined.log"),
+            "adapter_executor": {
+                "adapter_id": "audio.playback",
+                "action": "prepared_pygame",
+                "result": "PASS" if returncode == 0 else "FAIL",
+                "reason": "in-process pygame playback",
+                "cmd": ["prepared-pygame-playback", str(self.audio_file)],
+                "returncode": returncode,
+                "side_effect": True,
+                "dry_run": False,
+                "started_at": started_at.isoformat(timespec="milliseconds"),
+                "finished_at": finished_at.isoformat(timespec="milliseconds"),
+            },
+        }
+        (output_dir / "playback.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        (output_dir / "play_combined.log").write_text("\n".join(payload["stdout_lines"]) + ("\n" + stderr if stderr else "\n"), encoding="utf-8")
+        return payload
+
+    def close(self) -> None:
+        try:
+            self._pygame.mixer.quit()
+        except Exception:
+            pass
 
 
 def analyze_interrupt(
@@ -365,6 +610,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fallback-injection-offset-ms", type=int, default=1800)
     parser.add_argument("--timing-advance-ms", type=int, default=1200, help="提前注入以抵消自播起点抖动，避免压到播报尾部")
     parser.add_argument("--guard-ms", type=int, default=600)
+    parser.add_argument("--sync-on-self-play", action="store_true", help="先播放唤醒+前置命令，再根据实时日志中的自播 start 事件注入，避免固定延时卡在临界时序。")
+    parser.add_argument("--asr-gate-timeout-s", type=float, default=16.0)
+    parser.add_argument("--self-play-start-timeout-s", type=float, default=10.0)
+    parser.add_argument("--playback-startup-compensation-ms", type=int, default=900, help="sync 模式下提前启动短音频播放进程，抵消 skip-probe 播放启动开销。")
     return parser
 
 
@@ -379,31 +628,134 @@ def main() -> int:
         raise SystemExit("selected_interrupt_prerequisite.json 中缺少 phrase。")
     response_start_delta_ms = int(selected.get("response_start_delta_ms") or args.fallback_response_start_ms)
     injection_offset_ms = int(selected.get("injection_offset_ms") or args.fallback_injection_offset_ms)
-    delay_after_command_ms = max(0, response_start_delta_ms + injection_offset_ms - int(args.timing_advance_ms))
     injection_text = args.injection_text.strip() or (args.wake_word if args.kind == "wake" else "打开空调")
     output_dir = Path(args.output_dir).resolve() if args.output_dir else default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
-    audio_file = output_dir / "audio" / f"interrupt_{args.kind}.wav"
-    manifest = build_interrupt_audio(
-        audio_file,
-        wake_word=args.wake_word,
-        prerequisite_phrase=prerequisite_phrase,
-        injection_text=injection_text,
-        wake_gap_ms=args.wake_gap_ms,
-        delay_after_command_ms=delay_after_command_ms,
-        tail_observe_ms=args.tail_observe_ms,
-    )
-    manifest["timing_advance_ms"] = int(args.timing_advance_ms)
-    playback = run_playback(audio_file, args.device_key, output_dir, timeout_s=max(120, int(manifest["duration_ms"] / 1000) + 120))
-    playback_started_at = datetime.fromisoformat(str(playback["playback_started_at"]))
-    finished_at = datetime.fromisoformat(str(playback["finished_at"]))
-    session_dir = Path(selected_file).resolve().parents[1] / "session"
-    bdd_run_dir = os.environ.get("POLARIS_BDD_RUN_DIR", "").strip()
-    if bdd_run_dir:
-        session_dir = Path(bdd_run_dir).resolve() / "session"
-    elif not session_dir.exists():
-        marker = WORKSPACE_ROOT / ".current_result_dir"
-        session_dir = Path(marker.read_text(encoding="utf-8").strip()) if marker.exists() else WORKSPACE_ROOT / "result"
+
+    session_dir = determine_session_dir(selected_file)
+    if args.sync_on_self_play:
+        precondition_audio = output_dir / "audio" / f"interrupt_{args.kind}_precondition.wav"
+        injection_audio = output_dir / "audio" / f"interrupt_{args.kind}_injection.wav"
+        precondition_manifest = build_precondition_audio(
+            precondition_audio,
+            wake_word=args.wake_word,
+            prerequisite_phrase=prerequisite_phrase,
+            wake_gap_ms=args.wake_gap_ms,
+        )
+        injection_manifest = build_single_tts_audio(injection_audio, injection_text)
+        precondition_playback = run_playback(
+            precondition_audio,
+            args.device_key,
+            output_dir / "precondition_playback",
+            timeout_s=max(120, int(precondition_manifest["duration_ms"] / 1000) + 120),
+        )
+        prepared_player: Optional[PreparedPygamePlayback] = None
+        try:
+            prepared_player = PreparedPygamePlayback(injection_audio, args.device_key)
+        except Exception:
+            prepared_player = None
+        playback_started_at = datetime.fromisoformat(str(precondition_playback["playback_started_at"]))
+        command_end_at = playback_started_at + timedelta(milliseconds=int(precondition_manifest["command_end_ms"]))
+        # Do not block on exact ASR text: cloud logs may be transcoded or split.
+        # Search near the measured response window so the short wake prompt is skipped,
+        # then inject relative to the first real self-play start observed live.
+        search_delay_ms = max(1000, response_start_delta_ms - 2500)
+        asr_line = wait_for_line(
+            session_dir,
+            "COM14",
+            command_end_at + timedelta(milliseconds=search_delay_ms),
+            ASR_TEXT_RE,
+            0.2,
+        )
+        asr_gate_at = parse_ts(asr_line) if asr_line else command_end_at + timedelta(milliseconds=search_delay_ms)
+        self_play_line = wait_for_line(
+            session_dir,
+            "COM14",
+            asr_gate_at,
+            SELF_PLAY_START_RE,
+            args.self_play_start_timeout_s,
+        )
+        self_play_start_at = parse_ts(self_play_line) if self_play_line else command_end_at + timedelta(milliseconds=response_start_delta_ms)
+        target_injection_at = self_play_start_at + timedelta(milliseconds=injection_offset_ms)
+        process_start_at = target_injection_at - timedelta(milliseconds=max(0, int(args.playback_startup_compensation_ms)))
+        wait_s = (process_start_at - datetime.now()).total_seconds()
+        if wait_s > 0:
+            time.sleep(wait_s)
+        if prepared_player is not None:
+            target_wait_s = (target_injection_at - datetime.now()).total_seconds()
+            if target_wait_s > 0:
+                time.sleep(target_wait_s)
+            injection_playback = prepared_player.play(output_dir / "injection_playback")
+            prepared_player.close()
+        else:
+            injection_playback = run_playback_quick(
+                injection_audio,
+                args.device_key,
+                output_dir / "injection_playback",
+                timeout_s=max(120, int(injection_manifest["duration_ms"] / 1000) + 120),
+            )
+        injection_started_at = datetime.fromisoformat(str(injection_playback["playback_started_at"]))
+        injection_finished_at = datetime.fromisoformat(str(injection_playback["finished_at"]))
+        if args.tail_observe_ms > 0:
+            time.sleep(max(0, args.tail_observe_ms) / 1000.0)
+        manifest = {
+            "output_wav": str(injection_audio),
+            "wake_word": args.wake_word,
+            "prerequisite_phrase": prerequisite_phrase,
+            "injection_text": injection_text,
+            "wake_gap_ms": args.wake_gap_ms,
+            "delay_after_command_ms": "",
+            "tail_observe_ms": args.tail_observe_ms,
+            "duration_ms": int((injection_finished_at - playback_started_at).total_seconds() * 1000),
+            "command_start_ms": precondition_manifest["command_start_ms"],
+            "command_end_ms": precondition_manifest["command_end_ms"],
+            "injection_start_ms": int((injection_started_at - playback_started_at).total_seconds() * 1000),
+            "injection_end_ms": int((injection_finished_at - playback_started_at).total_seconds() * 1000),
+            "timing_advance_ms": "sync",
+            "sync_on_self_play": True,
+            "sync_gate": {
+                "asr_line": asr_line or "",
+                "self_play_line": self_play_line or "",
+                "asr_gate_at": asr_gate_at.isoformat(timespec="milliseconds"),
+                "self_play_start_at": self_play_start_at.isoformat(timespec="milliseconds"),
+                "target_injection_at": target_injection_at.isoformat(timespec="milliseconds"),
+                "process_start_at": process_start_at.isoformat(timespec="milliseconds"),
+                "playback_startup_compensation_ms": int(args.playback_startup_compensation_ms),
+                "injection_offset_ms": injection_offset_ms,
+            },
+            "steps": [
+                {"type": "precondition_audio", **precondition_manifest},
+                {"type": "injection_audio", **injection_manifest},
+            ],
+        }
+        (output_dir / "audio" / f"interrupt_{args.kind}_sync_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        playback = merge_playback_summary(
+            precondition_playback,
+            injection_playback,
+            device_key=args.device_key,
+            log_path=output_dir / "sync_playback.log",
+        )
+        finished_at = datetime.now()
+    else:
+        delay_after_command_ms = max(0, response_start_delta_ms + injection_offset_ms - int(args.timing_advance_ms))
+        audio_file = output_dir / "audio" / f"interrupt_{args.kind}.wav"
+        manifest = build_interrupt_audio(
+            audio_file,
+            wake_word=args.wake_word,
+            prerequisite_phrase=prerequisite_phrase,
+            injection_text=injection_text,
+            wake_gap_ms=args.wake_gap_ms,
+            delay_after_command_ms=delay_after_command_ms,
+            tail_observe_ms=args.tail_observe_ms,
+        )
+        manifest["timing_advance_ms"] = int(args.timing_advance_ms)
+        playback = run_playback(audio_file, args.device_key, output_dir, timeout_s=max(120, int(manifest["duration_ms"] / 1000) + 120))
+        playback_started_at = datetime.fromisoformat(str(playback["playback_started_at"]))
+        finished_at = datetime.fromisoformat(str(playback["finished_at"]))
+
     raw_logs = collect_logs(session_dir, playback_started_at - timedelta(seconds=2), finished_at + timedelta(seconds=5), output_dir)
     payload = analyze_interrupt(
         output_dir,

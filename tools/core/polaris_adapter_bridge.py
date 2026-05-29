@@ -121,6 +121,8 @@ def action_result_to_step(name: str, result: AdapterActionResult, started_at: Op
         started = datetime.now()
     return {
         "name": name,
+        "result": result.result,
+        "reason": result.reason,
         "cmd": result.cmd,
         "returncode": result.returncode if result.returncode is not None else (-1 if result.result in {"FAIL", "BLOCKED"} else 0),
         "started_at": started.isoformat(timespec="seconds"),

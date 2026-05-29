@@ -48,6 +48,28 @@
 
 因此本机当前状态不是 `.00.02` 版本未授权，也不是设备端 env 与 UAT 配置不一致；剩余阻塞更像是目标云端认为该 IoT ID 未上线/未注册到对应控制链路，或后台授权/设备在线态仍未满足。该状态必须按 `BLOCKED` 记录，不能判固件全双工功能失败。
 
+## 2026-05-28 10:38 复测记录
+
+后续对同一台 WS63 重新执行云控诊断，云端在线态已恢复：
+
+- 诊断目录：`satellite/cucumber-agent-testing/debug/cloud_diagnostics/20260528_103844_venusws63/`
+- Session 日志目录：`satellite/cucumber-agent-testing/debug/ws63_cloud_control_probe_20260528_104059/`
+- `Project Version` 仍为 `35.03.01.01.18.26.05.04.00.01`
+- 设备端 `env=1/UAT`，与 `cloud.api_environment=uat` 一致
+- `deviceinfo` 仍为 IoT ID `210006741088068`
+- `polaris_cloud_diagnostics.py --probe-cloud` 返回 `PASS`
+- v2 `set-full-duplex --enable 1 --timeout 15` 返回 HTTP 200 且业务成功
+- 直接调用历史 v1 `fullDuplex_switch(onoroff=1, timeOut=15)` 也返回成功，AP 日志出现 `MSpeech Cloud ... fullDuplex`、`refresh algo timeout to 15 by fullduplex_refresh`、`fullduplex timeout refresh to 15s`
+- 本轮同时验证的安全云控项：
+  - `set-volume --value 80`：PASS，AP 日志出现 `audio{"volume":"80"}`
+  - `set-mic --enable 1`：PASS，云端业务成功
+  - `set-night-mode --enable 0`：PASS，AP/upper 日志出现 `nightmode off`
+  - `set-log --status 1 --level 2`：PASS，日志出现 `set logLevel to 2` / `recv log level 2, status 1`
+
+结论：当前 WS63 的 UAT 云控链路已经从此前 `501 设备未上线` 恢复为可控状态。后续若再次出现 `501`，优先按“设备在线态/云端注册态波动”排查；若版本变为 `.00.02`，仍按“后台未授权版本”优先归因。
+
+补充工具修复：session logger 模式下，`deviceinfo` 日志会带统一前缀，旧版 `polaris_app_control.py` 只按行首解析 `IoT ID:`，导致 session 模式误报 `deviceinfo did not return IoT ID`。现已改为在日志行内查找字段，避免把工具解析问题误判为设备云控问题。
+
 ## 自动诊断入口
 
 可使用下面命令生成诊断报告：

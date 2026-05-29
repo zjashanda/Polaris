@@ -137,8 +137,18 @@ python satellite\cucumber-agent-testing\scripts\generate_requirement_package.py 
 - 证据目录。
 - 设备稳定性：reboot/crash/watchdog/panic。
 - 异常识别：额外 wake/ASR/command。
+- 交互链路：每轮尽量给出 `唤醒 -> 识别 -> 云端请求 -> 设备响应` 的一一对应关系。
+- 识别信息：记录期望语料、实际识别中文、识别拼音、本地 keyword/拼音以及额外误识别候选。
+- 在线请求信息：在线场景必须记录 `mid`、`sessionId`、`recordId`、`topic`、`deviceId`、云端响应类型、TTS/media URL、来源日志和行号；后续可用这些字段去云端捞对应音频。
+- 链路耗时信息：WB01/WS63 都要尽量记录 `wake_to_recognition_ms`、`wake_to_cloud_request_ms`、`cloud_request_to_recognition_ms`、`cloud_request_to_first_cloud_response_ms`、`cloud_request_to_audio_broadcast_ms`、`cloud_request_to_speech_reply_ms`、`recognition_to_first_cloud_response_ms`、`recognition_to_audio_broadcast_ms`、`recognition_to_speech_reply_ms`、`recognition_to_tts_start_ms`、`recognition_to_media_start_ms`、`first_cloud_response_to_tts_start_ms`、`first_cloud_response_to_media_start_ms`、`audio_broadcast_to_tts_start_ms`、`audio_broadcast_to_media_start_ms`、`tts_start_to_media_start_ms`、`tts_or_media_play_duration_ms`；时间戳缺失或日志 marker 不存在时保留 `limitations/evidence_gap`，不能伪造耗时。
 - 需求问题：需要用户确认的口径。
 - 后续建议：新增用例、补资料、修脚本、复测。
+
+当前在线混合压测和命令控制诊断结果会把上述信息写入单轮 `result.json` 的 `metrics.interaction_trace` / `metrics.online_request_ids` / `metrics.latency_samples`，并在 `rounds.csv` / `matrix.csv` 中输出常用列；历史日志可用下面命令补抽：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\extract_online_request_ids.py --log <COMxx.log>
+```
 
 ## 9. 未完全落地时的处理
 

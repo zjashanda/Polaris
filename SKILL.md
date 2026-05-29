@@ -8,6 +8,101 @@ summary: Polaris 语音设备 BDD + Event Runtime 真机验证 skill。
 
 本 skill 已切换到新方案：Cucumber/BDD 用例入口 + Event Runtime 事件断言 + 项目化本机配置。旧方案已迁移到 `oldTime/`，不再作为执行入口。
 
+## 快速定位
+
+Polaris 用来做嵌入式语音设备的本地真机验证，核心是把“用户需求”转成“可执行、可断言、可复盘”的 BDD/Runtime 流程：
+
+```text
+需求/任务
+  -> 测试方案和 Cucumber 用例
+  -> step/action/assertion registry
+  -> Adapter Executor 真机动作
+  -> 串口/声卡/云控/媒体/网络证据
+  -> Event Runtime replay
+  -> PASS/FAIL/BLOCKED/WARN/TIMING_AMBIGUOUS + 归因报告
+```
+
+当前同时支持两类工作：
+
+- **功能测试验证**：验证唤醒、命令词、半/全双工、在线交互、打断、one-shot、联网恢复等功能是否符合预期。
+- **稳定性压测**：长时间随机执行在线音乐/新闻/相声/问答/命令词/组合场景，统计异常、重启、crash、watchdog、无唤醒、无 ASR、媒体错误和误识别候选。
+
+## 整体框架模块口径
+
+向用户或新人解释当前 skill 时，必须按“分层框架”说明，而不是只说几个脚本入口。整体链路是：
+
+```text
+项目配置/需求资料
+  -> 知识库/Wiki
+  -> BDD Feature / Task / Scene
+  -> Step-Action-Assertion Registry / Validation IR
+  -> Adapter Executor / Validation Kernel
+  -> 串口、声卡、云控、网络、上下电等真机证据
+  -> Event Runtime: Event Bus + Timeline + StateMachine
+  -> Assertion / Coverage / Event Graph
+  -> 报告、归因、失败反哺、回归用例
+```
+
+各模块职责口径：
+
+- 配置与项目画像层：`polaris.local.json` 记录 active project、串口、声卡、UAT/SIT、Wi-Fi、唤醒词和能力开关，避免脚本写死设备差异。
+- 需求理解与知识库层：`docs/intake/` 接收新资料，`docs/wiki/` 沉淀通用方法，`docs/knowledge/<project_id>/` 沉淀项目差异和私有规则。
+- BDD/Task/Scene 层：`features/`、`tasks/`、`references/scenes/` 只表达测试意图、用例矩阵和场景组合，不写复杂断言细节。
+- Registry/IR 编译层：`voice_core_mapping.json`、`compile_feature.py`、`compile_validation_ir.py` 把自然语言或 task 编译成确定性动作与断言。
+- Adapter 执行动作层：串口、声卡、PA/上下电、云控、联网都走固定 adapter；新动作优先补 adapter/registry，不为单用例写临时脚本。
+- 会话与资源管理层：负责 managed session、串口覆盖、资源占用和 side-effect 门禁；关键串口打不开要判 `BLOCKED` 或 coverage degraded。
+- 执行编排层：`run_task.py`、`run_optimized_task.py`、`run_validation_kernel.py`、`run_kernel_scene.py` 负责 dry-run/execute、重试、前置/收尾和 run 目录。
+- 证据采集层：所有 AP/CP/ASR/上位/控制口日志、声卡播放、云控响应、媒体/TTS 产物都必须进入 debug run 目录。
+- Event Runtime 层：把日志和产物转换为 `WakeDetected`、`ASRResult`、`CommandMatched`、`TTS/Media/Network/Reboot` 等事件和 timeline。
+- 状态机与断言层：用时序、状态、排斥事件、coverage 阈值输出 `PASS/FAIL/BLOCKED/WARN/TIMING_AMBIGUOUS`，并区分固件、设备、环境、需求、时序和 oracle 缺口。
+- Event Graph 与归因层：用事件因果边定位 ASR 到 TTS/media/control 的链路断点、重启/crash 风险和项目私有 marker。
+- 报告与反哺层：报告必须串起唤醒、识别拼音/中文、在线 `mid/sessionId/recordId`、设备响应和证据路径；失败经确认后进入 failure wiki 和回归用例。
+- 稳定性压测层：在线混合压测、唤醒压测等要统计轮次、异常窗口、误唤醒/误识别、媒体错误、重启、crash、watchdog。
+- 声学/媒体 Oracle 层：日志级媒体响应和真实声学回采分开判断；没有 capture/loopback 时不能声称“真实出声通过”。
+
+## 工作流要求
+
+用户给测试需求时，优先按下面流程工作，不要退回零散调试模式：
+
+```text
+需求解读
+  -> 输出测试方案、用例矩阵、正例/反例/异常/边界/稳定性关注点
+  -> 等用户确认
+  -> 选择已有 task/scene 或补齐 registry/runtime
+  -> 真机执行
+  -> 输出总报告、失败归因、证据路径、后续沉淀
+```
+
+如果是已有能力，例如首次唤醒、基础命令词、在线全双工、在线混合压测，应尽快复用现有 task/scene/registry，不要为单条用例临时写一次性脚本。
+
+## 结果记录要求
+
+每条用例结果尽量记录完整交互链路，方便用户复盘和云端查音频：
+
+- 唤醒：唤醒时间、唤醒词、唤醒拼音、来源串口和行号。
+- 识别：期望语料、实际识别中文、识别拼音、本地 keyword/拼音、额外误识别。
+- 在线请求：`mid`、`sessionId`、`recordId`、`topic`、`deviceId`、`sn`、`clientId`。
+- 云端响应：`cloud.speech.trans.ack`、`cloud.instructions.audioBroadcast`、`cloud.speech.reply`、`mideaSkillId`、TTS/media URL。
+- 设备响应：TTS/media 播放、控制回复、蜂鸣器/执行反馈、媒体错误。
+- 稳定性：reboot、crash、watchdog、panic、串口断流、HTTP/player/media error。
+
+报告目标是尽量做到：
+
+```text
+一次唤醒 -> 一次识别 -> 一次云端请求 -> 一次设备响应 -> 一个结论
+```
+
+## 亮点口径
+
+向新人解释本 skill 时，突出这些点：
+
+- BDD 用例不等于临时脚本；执行动作和断言沉淀在 registry/runtime 中，可脱离大模型稳定执行。
+- 真机证据优先，所有串口/声卡/云控/媒体/重启/执行产物都要保存到 debug run 目录。
+- 断言必须可归因，不能把声卡、串口、云端、UAT/SIT、需求口径、临界时序问题误判成固件 FAIL。
+- 在线场景必须保留 `mid/sessionId/recordId`，便于后续到云端按请求 ID 查音频。
+- 新项目只改 `polaris.local.json` 和项目知识库，不把 COM 口、声卡、UAT/SIT 写死到脚本。
+- 新资料走 `docs/intake/`，通用方法进 `docs/wiki/`，项目差异进 `docs/knowledge/<project_id>/`，持续迭代。
+
 ## 必须遵守
 
 1. 每次启动先读取根目录 `plan.md`；没有则创建。

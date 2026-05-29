@@ -4,6 +4,202 @@ Polaris 是一个面向嵌入式语音设备的本地真机验证 skill。当前
 
 本仓库不要求每次执行时联网或依赖大模型生成脚本。新用例只要进入已有的 step/action/assertion registry，后续就可以脱离大模型稳定执行。
 
+## 0. 一页读懂：这个 skill 是什么、怎么用、亮点在哪里
+
+### 0.1 一句话定位
+
+Polaris 是一套“语音设备真机自动化验证框架”：把用户的自然语言测试需求沉淀成 BDD/Cucumber 用例，再通过固定 Adapter、串口/声卡/云控工具、Event Runtime 和断言引擎完成真机功能验证、长时间稳定性压测、异常归因和报告输出。
+
+它不是一次性调试脚本集合，而是一个可以持续学习新项目、新功能、新日志规则的本地 skill。
+
+### 0.2 支持的两类核心任务
+
+| 类型 | 解决的问题 | 典型场景 | 典型结论 |
+|---|---|---|---|
+| 功能测试验证 | 某个功能是否符合需求 | 首次唤醒、识别模式唤醒、半/全双工、基础命令词、在线问答、打断、one-shot、联网恢复 | `PASS / FAIL / BLOCKED / WARN / TIMING_AMBIGUOUS`，并给出失败归因 |
+| 稳定性压测 | 长时间随机交互是否稳定 | 一晚在线混合压测、唤醒率压测、随机间隔命令词/媒体交互、重启/崩溃监控 | 总轮数、异常轮次、重启/crash/watchdog、无唤醒、无 ASR、媒体错误、误识别候选 |
+
+### 0.3 你如何触发一次测试
+
+#### 方式 A：你给一句需求，我生成方案和用例，确认后执行
+
+适合功能验证，例如“测试在线全双工相关功能”“测试唤醒功能”“验证打开空调控制链路”。
+
+```text
+用户需求
+  -> 需求解读
+  -> 生成测试方案、用例矩阵、关注点、缺口
+  -> 用户确认
+  -> Cucumber/Task 真机执行
+  -> Runtime replay + 断言
+  -> 总报告和问题归因
+```
+
+生成确认包：
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\generate_requirement_package.py --requirement "在线全双工相关功能验证" --project cskwb01 --env-file polaris.local.json
+```
+
+#### 方式 B：直接运行已有标准任务
+
+适合已有能力的快速验证，例如首次唤醒、基础命令词、在线混合压测。
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_optimized_task.py `
+  --task satellite\cucumber-agent-testing\tasks\examples\first_wake.example.json `
+  --mode execute --allow-side-effects --manage-session --runtime-strict
+```
+
+#### 方式 C：运行稳定性压测
+
+适合夜间长时间压测，例如在线音乐/新闻/相声/问答/命令词随机混合。
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\run_task.py `
+  --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.example.json `
+  --mode execute --allow-side-effects
+```
+
+#### 方式 D：对历史日志补抽在线请求 ID
+
+适合根据 `mid/sessionId/recordId` 到云端捞对应音频。
+
+```powershell
+python satellite\cucumber-agent-testing\scripts\extract_online_request_ids.py --log <COMxx.log>
+```
+
+### 0.4 框架执行逻辑
+
+```text
+polaris.local.json 项目配置
+        ↓
+需求 / Task JSON / Cucumber Feature
+        ↓
+Step / Action / Assertion Registry
+        ↓
+Adapter Executor
+  - 串口日志
+  - 控制口上下电/PA
+  - 声卡播放/laid 查询
+  - 云控 API/UAT/SIT
+  - 网络/热点/媒体辅助
+        ↓
+真机执行产物 debug/<run>
+        ↓
+Event Runtime Replay
+  - 串口/JSON/播放产物解析为事件
+  - Wake/ASR/Command/TTS/Media/Network/Reboot 状态机
+  - 时序、覆盖率、禁止事件、稳定性断言
+        ↓
+报告
+  - 功能结论
+  - 失败归因
+  - 唤醒-识别-云端请求-响应链路
+  - 证据目录
+```
+
+### 0.4.1 整体框架模块功能介绍
+
+当前框架按优化方案拆成“需求/知识 -> BDD/IR -> Adapter 执行 -> Event Runtime -> 断言/报告 -> 失败反哺”的分层结构。理解这些模块后，就能知道为什么新增需求通常只需要补知识、用例或 registry，而不是每次重新写一套脚本。
+
+```text
+需求/资料/项目配置
+        ↓
+知识库 + BDD/Task/Scene
+        ↓
+Registry / Validation IR Compiler
+        ↓
+Validation Kernel / Runner / Scene Engine
+        ↓
+Device Adapter Layer
+        ↓
+真机证据采集
+        ↓
+Event Runtime: Event Bus + Timeline + StateMachine
+        ↓
+Assertion / Coverage / Event Graph
+        ↓
+报告输出 + 失败归因 + 回归用例反哺
+```
+
+| 模块 | 主要职责 | 主要输入 | 主要输出 | 目录/入口 |
+|---|---|---|---|---|
+| 配置与项目画像层 | 统一管理当前项目、串口拓扑、声卡、UAT/SIT、Wi-Fi、唤醒词、能力开关；避免把 COM 口和环境写死到脚本里。 | `polaris.local.json`、`polaris.local.example.json`、项目 overlay、能力声明。 | 归一化 env、项目 capability、串口/声卡/云控配置。 | 根目录配置、`satellite/cucumber-agent-testing/scripts/polaris_env.py` |
+| 需求理解与知识库层 | 把用户需求、表格、项目资料、历史调试经验转成可复用测试方法、断言规则和项目差异。 | 用户一句需求、`docs/intake/` 原始资料、`docs/requirements/`、旧资料归档。 | 测试方案思路、验证包、gap list、项目私有 rule。 | `docs/wiki/`、`docs/knowledge/<project_id>/`、`docs/intake/` |
+| BDD / Task / Scene 用例层 | 表达“要验证什么”，让用例可读、可评审、可组合；不在自然语言里塞复杂时序和断言细节。 | Cucumber feature、task JSON、scene JSON、需求包。 | 可执行任务、场景矩阵、标签、需求映射。 | `features/`、`tasks/`、`tasks/examples/`、`references/scenes/` |
+| Registry / IR 编译层 | 把自然语言 step、task、scene 映射成已知 action/assertion；统一编译为 deterministic Validation IR。 | Feature plan、task、scene、`voice_core_mapping.json`、assertion/profile 配置。 | 执行计划、IR bundle、动作/断言清单。 | `scripts/compile_feature.py`、`scripts/compile_validation_ir.py`、`references/voice_core_mapping.json` |
+| Adapter 执行动作层 | 只负责把固定动作落到设备：串口写入、声卡播放、PA/上下电、云控、网络辅助；Runtime 不关心具体项目怎么接线。 | IR/action plan、env 配置、adapter flow。 | adapter result、pre/post flow、命令执行证据。 | `tools/core/polaris_adapter_bridge.py`、`scripts/run_adapter_action.py`、`scripts/plan_adapter_flow.py` |
+| 真机会话与资源管理层 | 管理串口会话、日志采集、资源占用、side-effect 门禁；串口打不开或关键角色缺失时输出 BLOCKED/覆盖降级。 | `--manage-session`、串口配置、side-effect 许可、资源策略。 | session manifest、live logs、serial coverage、constraint result。 | `tools/core/polaris_runtime.py`、`runtime/resource_runtime.py`、`runtime/constraint_engine.py` |
+| 执行编排层 | 负责 dry-run/execute、重试、scene 顺序、kernel 生命周期、前置/收尾动作和 run 目录组织。 | task/scene/IR、运行模式、重试策略、adapter flow。 | execution_record、attempts、run_summary、kernel artifacts。 | `scripts/run_task.py`、`scripts/run_optimized_task.py`、`scripts/run_validation_kernel.py`、`scripts/run_kernel_scene.py` |
+| 证据采集层 | 保存 AP/CP/ASR/上位/控制口日志、声卡播放记录、云控响应、媒体/TTS 产物和窗口日志。 | 真机运行过程、串口流、播放/云控/网络工具输出。 | `merged.log`、`COM*.log`、window logs、playback/cloud/media artifacts。 | `satellite/cucumber-agent-testing/debug/<run>/` |
+| Event Runtime / 事件解析层 | 把原始日志和产物转换成统一事件，形成时间线和交互链路；后续断言不再直接猜日志文本。 | 串口日志、result JSON、播放产物、云端响应。 | `events.json`、`timeline.json`、interaction trace、wake/asr/media/network/reboot events。 | `runtime/events.py`、`runtime/timeline.py`、`runtime/parsers/`、`tools/logs/polaris_interaction_trace.py` |
+| 状态机与断言层 | 用状态机、时序窗口、排斥事件、coverage 阈值判断 PASS/FAIL/BLOCKED/WARN/TIMING_AMBIGUOUS。 | Event timeline、state policy、assertion DSL、项目覆盖阈值。 | `assertions.json`、`runtime_state.json`、state_health、coverage、失败分类。 | `runtime/state_machine.py`、`runtime/assertion_engine.py`、`scripts/run_state_assertion_dsl.py`、`scripts/run_state_coverage_policy.py` |
+| Event Graph 与归因层 | 建立事件因果关系，识别 ASR 到 TTS/media/control 的链路断点、重启/crash 风险和项目私有 marker。 | events/timeline、event graph rules、项目 overlay。 | risk_summary、因果边、失败归因线索。 | `scripts/build_event_graph.py`、`references/optimization/event_graph_rules.json`、`references/project_marker_overlays.json` |
+| 失败反哺与回归层 | 把真机失败转成候选回归用例、断言补强建议和 failure wiki；人工确认后才注册到稳定资产。 | 失败 run、assertions、logs、人工确认。 | failure case package、regression task、registry、failure-pattern wiki。 | `scripts/generate_failure_case.py`、`scripts/register_failure_case.py`、`docs/wiki/voice-validation/failure-patterns/` |
+| 报告与可追溯层 | 生成用户可读总报告，串起唤醒、识别拼音/中文、在线 `mid/sessionId/recordId`、TTS/media/control 结果和证据目录。 | run 目录、interaction trace、assertions、stress summary。 | report md/json/csv、请求 ID 索引、覆盖矩阵。 | `scripts/build_validation_summary_report.py`、`scripts/build_command_control_summary_report.py`、`scripts/extract_online_request_ids.py` |
+| 稳定性压测层 | 长时间随机交互，统计轮次、成功率、异常轮、误唤醒/误识别、媒体错误、重启/crash/watchdog。 | 压测 task、语料池、随机权重、运行时长/轮次。 | rounds.csv、summary_final.json、异常窗口、趋势分析。 | `scripts/run_online_mixed_stress.py`、`scripts/analyze_online_stress.py`、唤醒压测脚本 |
+| 声学/媒体 Oracle 层 | 校验“设备日志说播了”和“真实声学是否可证明”之间的差异；无回采设备时只给日志级结论或 BLOCKED。 | 播放声卡、capture/loopback 声卡、媒体日志、ffmpeg/laid。 | acoustic metrics、media oracle report、RMS/峰值/有效时长/削波、oracle gap。 | `tools/audio/polaris_acoustic_oracle.py`、`scripts/analyze_media_response_oracle.py`、`tools/audio/polaris_laid.py` |
+
+这套分层的核心约束是：
+
+- 需求不直接驱动临时脚本，必须先落到知识库、BDD/Task/Scene 或 registry。
+- 执行不由大模型临场决定，必须走 Adapter、Runner、Kernel 这些确定性入口。
+- 判断不靠人工看几行日志猜测，必须走 Event Runtime、状态机、断言和 coverage。
+- 失败不只给口头结论，必须留下证据目录、归因链路，并能反哺 failure wiki 或回归用例。
+
+### 0.5 执行结果会记录哪些关键信息
+
+后续报告和单用例 `result.json` 会尽量记录“有助于复盘”的完整链路：
+
+| 信息 | 说明 |
+|---|---|
+| 唤醒 | 唤醒时间、唤醒词、唤醒拼音、来源串口和日志行 |
+| 识别 | 期望语料、实际识别中文、识别拼音、本地 keyword/拼音、额外误识别 |
+| 在线请求 | `mid`、`sessionId`、`recordId`、`topic`、`deviceId`、`sn`、`clientId` |
+| 云端响应 | `cloud.speech.trans.ack`、`cloud.instructions.audioBroadcast`、`cloud.speech.reply`、`mideaSkillId`、TTS/media URL |
+| 设备响应 | TTS/media 播放、控制回复、蜂鸣器/执行反馈证据、媒体错误 |
+| 稳定性 | reboot、crash、watchdog、panic、串口断流、HTTP/player/media error |
+| 归因 | 环境、声卡、串口、设备、固件、云端、需求、时序、oracle 缺口 |
+
+核心目标是做到：
+
+```text
+一次唤醒 -> 一次识别 -> 一次云端请求 -> 一次设备响应 -> 一个结论
+```
+
+### 0.6 已验证/沉淀的典型能力
+
+- 唤醒：首次唤醒、识别模式唤醒、连续唤醒、随机间隔唤醒、唤醒耗时、误唤醒 smoke。
+- 命令词：FA2 命令词、基础控制命令、查询命令、同义词/拼音 oracle、控制链路分段断言。
+- 半/全双工：模式切换、云控下发、识别窗口、超时、连续识别、播报中监听/打断。
+- 在线交互：新闻、音乐、相声、百科、炒菜问答、在线命令、媒体/TTS/MP3 响应。
+- 打断：自播窗口测量、唤醒打断、命令打断、临界时序保护。
+- 稳定性：夜间在线随机混合压测、唤醒压测、异常轮次统计、重启/崩溃归因。
+- 项目拓扑：`cskwb01` 四串口 AP+CP+ASR+control；`venusws63` 三串口 AP+upper+control，无 CP 自动降级。
+
+### 0.7 亮点
+
+- **不依赖临时脚本**：BDD 用例只要映射到 registry，后续执行不需要大模型动态改脚本。
+- **真机证据优先**：串口、声卡、云控、媒体、重启、执行产物都落到 debug 证据目录。
+- **断言可归因**：区分固件问题、设备/环境问题、云端问题、需求问题、时序不确定、oracle 缺口。
+- **链路级报告**：在线场景会保留 `mid/sessionId/recordId`，方便云端按请求 ID 查音频。
+- **项目可复用**：通过 `polaris.local.json` 切换 WB01/WS63/新项目，不把端口和环境写死在脚本里。
+- **持续学习**：新资料进入 `docs/intake/`，通用方法进 `docs/wiki/`，项目差异进 `docs/knowledge/<project_id>/`。
+- **稳定性压测闭环**：长时间压测不仅统计 PASS/FAIL，还记录误识别、媒体错误、重启、crash、watchdog 等异常窗口。
+
+### 0.8 新人最小上手路径
+
+```text
+1. 复制 polaris.local.example.json -> polaris.local.json
+2. 配置 active_project、串口、声卡、UAT/SIT、Wi-Fi
+3. 执行 python tools\audio\polaris_laid.py ensure/list 检查声卡
+4. 用 run_optimized_task.py 跑 first_wake smoke
+5. 用 generate_requirement_package.py 针对需求生成方案和用例
+6. 确认后 execute 真机执行
+7. 看 debug/<run>/execution_record.json、result.json、report.md、summary.json
+```
+
 ## 1. 适合解决什么问题
 
 - 语音唤醒：首次唤醒、识别模式下唤醒、连续唤醒、唤醒率压测。

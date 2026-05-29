@@ -524,7 +524,8 @@
             "--device-key",
             "{device_key}",
             "--wake-word",
-            "{wake_word}"
+            "{wake_word}",
+            "--sync-on-self-play"
           ]
         }
       ],
@@ -582,8 +583,9 @@
             "{device_key}",
             "--wake-word",
             "{wake_word}",
+            "--sync-on-self-play",
             "--timing-advance-ms",
-            "2200"
+            "0"
           ]
         }
       ],
