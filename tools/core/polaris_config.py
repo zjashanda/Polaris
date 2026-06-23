@@ -229,6 +229,21 @@ def get_baudrate(default: int = DEFAULT_BAUDRATE) -> int:
         return default
 
 
+def get_control_baudrate(default: int | None = None) -> int:
+    """Return the control-port baudrate without mutating the main serial baudrate."""
+    fallback = get_baudrate(default or DEFAULT_BAUDRATE)
+    env = read_env_config()
+    serial = env.get("serial", {}) if isinstance(env.get("serial"), dict) else {}
+    for key in ("control_baudrate", "power_control_baudrate"):
+        try:
+            value = serial.get(key)
+            if value not in (None, ""):
+                return int(value)
+        except Exception:
+            pass
+    return fallback
+
+
 def set_baudrate(baudrate: int, source: str = "cli") -> None:
     payload = load_port_config()
     payload["baudrate"] = int(baudrate)

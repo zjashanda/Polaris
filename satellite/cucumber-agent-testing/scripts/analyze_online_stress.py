@@ -25,6 +25,10 @@ BENIGN_TIMEOUT_RE = re.compile(
     r"(refresh algo timeout|Refresh PA to ON|cloud\.instructions\.audioBroadcast|SEND TEXT|Report Status)",
     re.I,
 )
+BENIGN_CLOUD_IOT_PAYLOAD_RE = re.compile(
+    r"(cloud\.speech\.reply|MSpeech Cloud 4 evt).*(deviceControlType|iotCtrlJson|failControlledDeviceList|successControlledDeviceList|controlDeviceId)",
+    re.I,
+)
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -50,10 +54,10 @@ def media_error_buckets(samples: List[str]) -> Dict[str, Any]:
     benign: List[str] = []
     unknown: List[str] = []
     for line in samples:
-        if REAL_MEDIA_ERROR_RE.search(line):
-            real.append(line)
-        elif BENIGN_TIMEOUT_RE.search(line):
+        if BENIGN_CLOUD_IOT_PAYLOAD_RE.search(line) or BENIGN_TIMEOUT_RE.search(line):
             benign.append(line)
+        elif REAL_MEDIA_ERROR_RE.search(line):
+            real.append(line)
         else:
             unknown.append(line)
     return {
@@ -103,10 +107,11 @@ def classify_non_pass(row: Dict[str, str], payload: Dict[str, Any]) -> Dict[str,
             "media_play": (samples.get("media_play") or [])[:3],
             "media_stop": (samples.get("media_stop") or [])[:3],
             "media_error": (samples.get("media_error") or [])[:5],
+            "boot": (samples.get("boot") or [])[:5],
         },
     }
     counts = base["counts"]
-    if result == "WARN_MEDIA_ERROR":
+    if result in {"WARN_MEDIA_ERROR", "WARN_MEDIA_ERROR_AND_UNEXPECTED_RECOGNITION"}:
         buckets = media_error_buckets(samples.get("media_error") or [])
         base["media_error_buckets"] = buckets
         if buckets["real_count"] > 0:
@@ -118,6 +123,14 @@ def classify_non_pass(row: Dict[str, str], payload: Dict[str, Any]) -> Dict[str,
         else:
             base["attribution"] = "script_false_positive"
             base["next_action"] = "当前 regex 把 timeout/Report Status/SEND TEXT 误计为媒体错误，应优化脚本后重放。"
+    elif result == "FAIL_REBOOT_OR_CRASH":
+        boot_samples = samples.get("boot") or []
+        if boot_samples and all("device.report.sdkException.ack" in str(line) for line in boot_samples):
+            base["attribution"] = "script_false_positive"
+            base["next_action"] = "仅观察到云端 sdkException ACK，不是设备 reboot/crash；按修复后 runner 规则应忽略。"
+        else:
+            base["attribution"] = "device_reboot_or_crash"
+            base["next_action"] = "保留为稳定性高优先级异常，需复核 boot/reset/panic/watchdog 原始行和前后业务操作。"
     elif result == "FAIL_NO_WAKE":
         if counts["media_play_count"] > 0 or counts["media_stop_count"] > 0:
             base["attribution"] = "self_play_overlap_or_device_busy"

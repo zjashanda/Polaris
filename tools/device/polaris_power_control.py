@@ -17,12 +17,12 @@ from typing import Dict, List, Optional
 
 import serial
 
-from tools.core.polaris_config import configured_log_ports, get_baudrate, get_port, resolve_port, set_baudrate
+from tools.core.polaris_config import configured_log_ports, get_control_baudrate, get_port, resolve_port, set_baudrate
 from tools.core.polaris_runtime import current_session_dir, ensure_dir, new_artifact_dir, read_lines_between
 
 
 DEFAULT_CONTROL_PORT = "COM15"
-DEFAULT_BAUDRATE = get_baudrate()
+DEFAULT_BAUDRATE = get_control_baudrate()
 
 COMMANDS = {
     "asr-on": "uut-reset.on",
@@ -177,8 +177,8 @@ def action_send(args: argparse.Namespace) -> int:
     output_dir = resolve_output_dir(args.output_dir, "power_control_send", session_dir)
     command = COMMANDS.get(args.command, args.command)
     port = resolve_port("control", args.port, source="polaris_power_control.send")
-    baudrate = args.baudrate if args.baudrate is not None else get_baudrate()
-    if args.baudrate is not None:
+    baudrate = args.baudrate if args.baudrate is not None else get_control_baudrate()
+    if args.sync_baudrate and args.baudrate is not None:
         set_baudrate(args.baudrate, source="polaris_power_control.send")
     payload = send_control_command(command, port, baudrate, output_dir)
     payload["session_dir"] = str(session_dir) if session_dir else None
@@ -192,8 +192,8 @@ def action_cycle(args: argparse.Namespace) -> int:
     output_dir = resolve_output_dir(args.output_dir, f"power_cycle_{args.target}", session_dir)
     assert_key, release_key = TARGET_CYCLE[args.target]
     port = resolve_port("control", args.port, source="polaris_power_control.cycle")
-    baudrate = args.baudrate if args.baudrate is not None else get_baudrate()
-    if args.baudrate is not None:
+    baudrate = args.baudrate if args.baudrate is not None else get_control_baudrate()
+    if args.sync_baudrate and args.baudrate is not None:
         set_baudrate(args.baudrate, source="polaris_power_control.cycle")
 
     start_dt = datetime.now()
@@ -233,14 +233,24 @@ def build_parser() -> argparse.ArgumentParser:
     send = sub.add_parser("send", help="send one raw or named COM15 control command")
     send.add_argument("--command", required=True, help="raw command or one of: asr-on, asr-off, wb01-on, wb01-off, csk-on, csk-off")
     send.add_argument("--port", default=None, help="default: configured control port")
-    send.add_argument("--baudrate", type=int, default=None, help="default: configured baudrate")
+    send.add_argument("--baudrate", type=int, default=None, help="default: configured control_baudrate")
+    send.add_argument(
+        "--sync-baudrate",
+        action="store_true",
+        help="also write --baudrate into the main serial config; default keeps control baudrate isolated",
+    )
     send.add_argument("--output-dir", default=None)
     send.set_defaults(func=action_send)
 
     cycle = sub.add_parser("cycle", help="power cycle asr/wb01 or csk and capture serial evidence")
     cycle.add_argument("--target", choices=sorted(TARGET_CYCLE), required=True)
     cycle.add_argument("--port", default=None, help="default: configured control port")
-    cycle.add_argument("--baudrate", type=int, default=None, help="default: configured baudrate")
+    cycle.add_argument("--baudrate", type=int, default=None, help="default: configured control_baudrate")
+    cycle.add_argument(
+        "--sync-baudrate",
+        action="store_true",
+        help="also write --baudrate into the main serial config; default keeps control baudrate isolated",
+    )
     cycle.add_argument("--off-wait", type=float, default=2.0)
     cycle.add_argument("--observe", type=float, default=20.0)
     cycle.add_argument("--output-dir", default=None)

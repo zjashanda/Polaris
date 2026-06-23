@@ -77,7 +77,7 @@ def evaluate_profile(profile: str, timeline: Timeline, capabilities: Dict[str, A
     if profile == "attribution_validator":
         return evaluate_attribution_validator(timeline)
     if profile == "interrupt_prerequisite_measurement":
-        return evaluate_interrupt_prerequisite(timeline)
+        return evaluate_interrupt_prerequisite(timeline, cp_log=cp_log, asr_log=asr_log)
     if profile == "wake_interrupt":
         return evaluate_wake_interrupt(
             timeline,

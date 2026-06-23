@@ -332,9 +332,7 @@ def adapt_phase_for_current_project(phase: dict) -> dict:
             metadata["split_wake_prefixed_tts_for_no_cp"] = True
             adapted["sequence"] = split_sequence
     if "min_cp_wake" in adapted:
-        adapted.setdefault("min_wb_online_wake", adapted.pop("min_cp_wake"))
-    if "min_ap_wake" in adapted:
-        adapted.setdefault("min_wb_online_wake", adapted.pop("min_ap_wake"))
+        adapted.setdefault("min_ap_wake", adapted.pop("min_cp_wake"))
     if "min_cp_command" in adapted:
         value = adapted.pop("min_cp_command")
         adapted.setdefault("min_ap_cloud_tts_recv", value)
@@ -356,9 +354,7 @@ def adapt_rules_for_current_project(rules: dict) -> dict:
         return rules
     adapted = dict(rules)
     if "min_cp_wake" in adapted:
-        adapted.setdefault("min_wb_online_wake", adapted.pop("min_cp_wake"))
-    if "min_ap_wake" in adapted:
-        adapted.setdefault("min_wb_online_wake", adapted.pop("min_ap_wake"))
+        adapted.setdefault("min_ap_wake", adapted.pop("min_cp_wake"))
     if "min_cp_command" in adapted:
         adapted.pop("min_cp_command")
     if "min_unique_command_keywords" in adapted:

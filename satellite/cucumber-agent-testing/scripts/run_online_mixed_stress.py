@@ -55,7 +55,11 @@ CP_COMMAND_KEYWORD_RE = re.compile(r"WAKE\(0\).*?KEY=\d+\(([^)]*)\)", re.I)
 ALGO_COMMAND_KEYWORD_RE = re.compile(r'"keyword"\s*:\s*"([^"]*)"', re.I)
 LOCAL_ASR_KEYWORD_RE = re.compile(r"ignore local asr\s+(.+?)\s+when cloud connected", re.I)
 PUNCT_OR_SPACE_RE = re.compile(r"[\s，。！？、,.!?:：;；\"'“”‘’（）()\[\]{}<>《》]+")
-MOJIBAKE_HINT_RE = re.compile(r"[\u00e5\u00e6\u00e7\u00e4\u00e9\u00e8\u00e3\u00ef\ufffd\u6c13\u5fd9\u83bd\u76f2\u8305\u732b\u832b\u8302\u951f\u7d94]" r"|(\u677c\u626e\u77c6|\u5a11\u65bf\u724a|\u59b2\u6401\u5d37|\u9361\u6b91|\u93cd\u3127\u6443|\u8f70\u7c88|\u6d94\u581f|\u69f8\u9366|\u55d9\u6b91|\u6828\u74d5)")
+MOJIBAKE_HINT_RE = re.compile(
+    r"[\x80-\x9f\ue000-\uf8ff\u00aa\u00e5\u00e6\u00e7\u00e4\u00e9\u00e8\u00e3\u00ef\ufffd\u6c13\u5fd9\u83bd\u76f2\u8305\u732b\u832b\u8302\u951f\u7d94]"
+    r"|(\u677c\u626e\u77c6|\u5a11\u65bf\u724a|\u59b2\u6401\u5d37|\u9361\u6b91|\u93cd\u3127\u6443|\u8f70\u7c88|\u6d94\u581f|\u69f8\u9366|\u55d9\u6b91|\u6828\u74d5)"
+    r"|(鎾|斁璐|粡鏂|椈|鎵|撳|紑|鑷|鍦熻|眴涓|鍗佸|搴)",
+)
 TTS_RE = re.compile(r"(TTS playing|TTS recv|ttsplayer play|wakeup_tts_callback|shortplayer status|cloud\.instructions\.audioBroadcast|tone player)", re.I)
 CLOUD_REPLY_RE = re.compile(r"(cloud\.speech\.reply|cloud\.instructions|MSpeech Cloud 4 evt|MSpeech Cloud 32 evt)", re.I)
 MEDIA_PLAY_RE = re.compile(r"(ttsplayer play|play audio https?://|player\".*\"status\":\"play\"|ttsplayer report state: play|TTS playing)", re.I)
@@ -72,7 +76,7 @@ BOOT_RE = re.compile(
     r"(Boot Reason|boot reason|ListenAI .*BOOT|RESET=|ASSERT|panic|fatal|watchdog|hard fault|exception|will reboot device|reboot_reason)",
     re.I,
 )
-BOOT_IGNORE_RE = re.compile(r"ignore exception", re.I)
+BOOT_IGNORE_RE = re.compile(r"(ignore exception|device\.report\.sdkException\.ack)", re.I)
 SERIAL_ERR_RE = re.compile(r"LOGGER_ERROR", re.I)
 LATENCY_FIELDS = [
     "wake_to_recognition_ms",
@@ -374,7 +378,24 @@ def entries_to_lines(entries: Iterable[CapturedLine]) -> List[str]:
 def is_media_error_line(text: str) -> bool:
     if "PA_MGR" in text and "Refresh PA to OFF" in text:
         return False
+    if is_cloud_iot_payload_line(text):
+        return False
     return bool(MEDIA_ERROR_RE.search(text))
+
+
+def is_cloud_iot_payload_line(text: str) -> bool:
+    """Cloud IOT control payloads may contain error/fail JSON keys but are not media errors."""
+    lowered = str(text or "").lower()
+    if "cloud.speech.reply" not in lowered and "mspeech cloud 4 evt" not in lowered:
+        return False
+    benign_iot_markers = (
+        '"devicecontroltype":"iot"',
+        '"iotctrljson"',
+        '"failcontrolleddevicelist"',
+        '"successcontrolleddevicelist"',
+        '"controlDeviceId"',
+    )
+    return any(marker.lower() in lowered for marker in benign_iot_markers)
 
 
 def count_media_errors(entries: Iterable[CapturedLine]) -> int:
@@ -770,6 +791,8 @@ class StressRunner:
             return "FAIL_NO_WAKE", "播放成功但没有唤醒 marker。"
         if metrics["asr_count"] <= 0 and not metrics["asr_texts"]:
             return "WARN_NO_ASR", "有唤醒但没有 ASR 文本/云端识别证据。"
+        if metrics.get("unexpected_asr_texts") and metrics["media_error_count"] > 0:
+            return "WARN_MEDIA_ERROR_AND_UNEXPECTED_RECOGNITION", "窗口内同时出现媒体/HTTP 错误标记和非预期 ASR 文本，需同时复核媒体链路与误识别。"
         if metrics.get("unexpected_asr_texts"):
             return "WARN_UNEXPECTED_RECOGNITION", "观察到与本轮播放语料不匹配的 ASR 文本，需按误识别复核。"
         if metrics["media_error_count"] > 0:

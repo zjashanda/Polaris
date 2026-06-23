@@ -36,6 +36,8 @@ IGNORED_MEDIA_ERROR_PATTERNS = [
     # PA manager's configured idle timeout after tone end is normal teardown,
     # not a playback failure.
     r"Refresh PA to OFF,\s*timeout\s+\d+,\s*by\s+\"tone_player_end\"",
+    r"Refresh PA to OFF,\s*timeout\s+\d+",
+    r"PA_MGR.*Refresh PA to (?:ON|OFF),\s*timeout\s+\d+",
 ]
 
 

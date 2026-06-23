@@ -121,6 +121,9 @@ Polaris 用来做嵌入式语音设备的本地真机验证，核心是把“用
 - 总报告汇总：`satellite/cucumber-agent-testing/scripts/build_validation_summary_report.py`
 - 在线混合压测：`satellite/cucumber-agent-testing/scripts/run_online_mixed_stress.py`
 - 压测分析：`satellite/cucumber-agent-testing/scripts/analyze_online_stress.py`
+- VenusA+WS63 自动烧录：`tools/firmware/polaris_venusws63_auto_burn.py`
+- VenusA+WS63 OTA 统计：`tools/ota/venus_ota_stats.py`
+- VenusA+WS63 OTA 邮件 HTML 报告：`tools/ota/build_venus_ota_html_report.py`
 - 新资料学习入口：`docs/intake/<project_id>/<YYYYMMDD_topic>/learning_manifest.json`
 - 长期 Wiki 知识库：`docs/wiki/`，其中 `docs/wiki/voice-validation/` 保存测试方法、断言归因和验证包。
 
@@ -134,6 +137,7 @@ Polaris 用来做嵌入式语音设备的本地真机验证，核心是把“用
 - 联网恢复、one-shot、唤醒矩阵、误唤醒、在线 VAD。
 - 在线基础命令、音乐、相声、新闻、问答混合压测。
 - 误唤醒/误识别记录：额外 wake/ASR/command 都要保留并参与归因。
+- VenusA+WS63 固件自动烧录包装、OTA 轮次统计、OTA 邮件安全 HTML 分析报告。
 
 ## 常用命令
 
@@ -143,6 +147,8 @@ python satellite\cucumber-agent-testing\scripts\generate_requirement_package.py 
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\basic_command.example.json --mode execute --allow-side-effects --manage-session
 python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode dry-run
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.example.json --print-command
+python tools\firmware\polaris_venusws63_auto_burn.py --firmware tools\fw\Midea_VenusA_WS63_35.03.01.01.18.26.06.04.00.04_20260616_171724.zip --dry-run
+python tools\ota\build_venus_ota_html_report.py --task-dir result\venus_ota_tasks\<TASK_DIR>
 ```
 
 ## 配置要点
@@ -156,6 +162,9 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 - 声卡播放返回 0 但设备无唤醒时，先在控制口执行 `uut-pa.on` 和 `pa-enable.set 0 17 0 1`。
 - API 场景要先切设备端 UAT/SIT/PRO 环境，再调用接口。
 - 云控 adapter 必须沿用当前任务/env-file 的项目配置；WB01/WS63 切换时不要让旧 `config/` 或根目录 `active_project` 影响 API 辅助脚本。
+- VenusA+WS63 烧录必须走 `tools/firmware/polaris_venusws63_auto_burn.py`，由它读取 `polaris.local.json` 的 AP/upper/control 端口；真实烧录必须加 `--allow-side-effects`，只构造命令用 `--dry-run`。
+- WS63 烧录工具必须在 Windows `chcp 936` 语境下运行，避免 `BurnTool_Gold\optLog` 中 `烧写结果：成功` 乱码成 `????` 导致误判。
+- 烧录后必须用 `version`/`deviceinfo` 确认物理固件版本，再执行联网、唤醒和识别验证；`vir_ver` 只代表云端门禁覆盖，不代表真实固件已更新。
 
 ## 持续学习规则
 

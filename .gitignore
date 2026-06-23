@@ -6,6 +6,11 @@ result/
 cache/
 outputs/
 _runtime/
+power_control_send/
+
+# External repositories and firmware payloads
+gitBelt/
+tools/fw/
 
 # Local machine config
 plan.md
@@ -18,6 +23,9 @@ __pycache__/
 *.py[cod]
 *.log
 *.tmp
+tools/VenusA+WS63/BurnTool_Gold/log.txt
+tools/VenusA+WS63/BurnTool_Gold/optLog/
+tools/VenusA+WS63/BurnTool_Gold/configure/config_mcu/temp/
 
 # Office temp
 ~$*.docx

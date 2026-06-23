@@ -137,6 +137,15 @@ def read_lines(path: Path) -> List[str]:
     return path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
+def read_log_files(log_dir: Path) -> Dict[str, List[str]]:
+    logs: Dict[str, List[str]] = {}
+    if not log_dir.exists():
+        return logs
+    for path in sorted(log_dir.glob("*.log")):
+        logs[path.stem] = read_lines(path)
+    return logs
+
+
 def load_candidate_records(path: Optional[Path]) -> List[Dict[str, Any]]:
     if not path or not path.exists():
         return []
@@ -499,10 +508,19 @@ def analyze_fa2_batch(
     playback = load_json(batch_dir / "playback.json")
     playback_started_at = datetime.fromisoformat(str(playback["playback_started_at"]))
     playback_returncode = int(playback.get("returncode", -1))
-    com14_lines = read_lines(batch_dir / "full_window_logs" / "COM14.log")
-    com13_lines = read_lines(batch_dir / "full_window_logs" / "COM13.log")
-    ap_starts, ap_stops = build_events(com14_lines, "COM14")
-    wb_starts, wb_stops = build_wb_events(com13_lines, "COM13")
+    full_logs = read_log_files(batch_dir / "full_window_logs")
+    all_lines = [line for lines in full_logs.values() for line in lines]
+    ap_starts: List[Event] = []
+    ap_stops: List[Event] = []
+    wb_starts: List[Event] = []
+    wb_stops: List[Event] = []
+    for source, lines in full_logs.items():
+        starts, stops = build_events(lines, source)
+        ap_starts.extend(starts)
+        ap_stops.extend(stops)
+        starts, stops = build_wb_events(lines, source)
+        wb_starts.extend(starts)
+        wb_stops.extend(stops)
     all_windows = pair_windows(ap_starts, ap_stops, max_duration_ms=max_window_duration_ms) + pair_windows(
         wb_starts, wb_stops, max_duration_ms=max_window_duration_ms
     )
@@ -537,7 +555,7 @@ def analyze_fa2_batch(
         detail = load_json(detail_path) if detail_path.exists() else {}
         diagnosis = dict(detail.get("diagnosis", {}))
         metrics = dict(detail.get("metrics", {}))
-        boot_lines = find_boot_or_crash(com14_lines + com13_lines, command_start, segment_end + timedelta(seconds=5))
+        boot_lines = find_boot_or_crash(all_lines, command_start, segment_end + timedelta(seconds=5))
         duration_ms = best.duration_ms if best else 0
         injection_offset_ms = choose_injection_offset(duration_ms, injection_guard_ms) if best else None
 
@@ -843,4 +861,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -36,8 +36,10 @@ from polaris_env import load_default_env  # noqa: E402
 from run_wake_stress import (  # noqa: E402
     asr_wake_count,
     classify_wake_round,
+    expected_wake_sources,
     gather_logs,
     sum_line_count,
+    wake_role_requirements,
     write_round_logs,
 )
 from tools.audio.polaris_audio_builder import build_sequence  # noqa: E402
@@ -121,6 +123,19 @@ def latency_payload(started_at: datetime, clean_logs: Dict[str, List[str]]) -> D
             values.append(value)
     payload["first_wake_marker_latency_ms"] = min(values) if values else None
     return payload
+
+
+def observed_required_wake_count(metrics: Dict[str, Any]) -> Tuple[int, List[str]]:
+    cp_required, asr_required = wake_role_requirements()
+    values = [int(metrics.get("ap_wake_count", 0) or 0)]
+    labels = ["AP"]
+    if cp_required:
+        values.append(int(metrics.get("cp_wake_count", 0) or 0))
+        labels.append("CP")
+    if asr_required:
+        values.append(asr_wake_count(metrics))
+        labels.append("ASR")
+    return min(values) if values else 0, labels
 
 
 def add_nominal_audio_end_latency(row: Dict[str, Any], wake_manifest: Dict[str, Any]) -> None:
@@ -244,25 +259,21 @@ def run_continuous(
         reason = "连续唤醒窗口出现 reboot/crash 标记。"
         counted = True
     else:
-        observed = min(
-            int(metrics.get("cp_wake_count", 0) or 0),
-            int(metrics.get("ap_wake_count", 0) or 0),
-            asr_wake_count(metrics),
-        )
+        observed, labels = observed_required_wake_count(metrics)
         if observed >= min_expected_wakes:
             result = "PASS"
             attribution = "pass"
-            reason = f"连续唤醒稳定性 smoke 通过，最小三端唤醒数 {observed}/{rounds}。"
+            reason = f"连续唤醒稳定性 smoke 通过，最小 {'/'.join(labels)} 唤醒数 {observed}/{rounds}。"
             counted = True
         elif observed > 0:
             result = "FAIL"
             attribution = "continuous_wake_evidence_below_expected"
-            reason = f"连续唤醒有部分证据但低于 smoke 期望，最小三端唤醒数 {observed}/{rounds}，期望 >= {min_expected_wakes}。"
+            reason = f"连续唤醒有部分证据但低于 smoke 期望，最小 {'/'.join(labels)} 唤醒数 {observed}/{rounds}，期望 >= {min_expected_wakes}。"
             counted = True
         else:
             result = "FAIL"
             attribution = "firmware_device_or_audio_path"
-            reason = "连续唤醒播放成功但未观察到完整三端唤醒证据。"
+            reason = f"连续唤醒播放成功但未观察到完整 {'/'.join(labels)} 唤醒证据。"
             counted = True
     write_round_logs(round_dir, raw, clean)
     row = {
@@ -382,6 +393,7 @@ def aggregate_rows(args: argparse.Namespace, output_dir: Path, rows: List[Dict[s
         "run_dir": rel(output_dir),
         "wake_word": args.wake_word,
         "device_key": args.device_key,
+        "expected_wake_sources": expected_wake_sources(),
         "wake_audio_duration_ms": int(wake_manifest.get("duration_ms", 0) or 0),
         "rounds_requested": args.rounds,
         "counts": counts,
@@ -403,6 +415,7 @@ def render_report(payload: Dict[str, Any]) -> str:
         f"- 归因：`{payload.get('attribution')}`",
         f"- 原因：{payload.get('reason')}",
         f"- 唤醒词：`{payload.get('wake_word')}`",
+        f"- 期望唤醒证据：`{'/'.join(payload.get('expected_wake_sources') or ['CP', 'AP', 'ASR'])}`",
         f"- 唤醒音频时长：`{payload.get('wake_audio_duration_ms')}ms`",
         f"- 结果分布：`{json.dumps(payload.get('counts', {}), ensure_ascii=False)}`",
         f"- 成功率：`{'' if payload.get('rate') is None else payload.get('rate')}`",
@@ -553,4 +566,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

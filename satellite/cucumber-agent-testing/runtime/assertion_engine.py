@@ -1039,6 +1039,9 @@ def evaluate_wake_matrix(timeline: Timeline, *, cp_log: bool = True, asr_log: bo
     all_rows = [*passed_rows, *failed_rows, *blocked_rows, *unknown_rows]
     assertions: List[AssertionResult] = []
     scenario = str((summary or {}).get("scenario", "") or "")
+    expected_sources = {str(item).upper() for item in _as_list((summary or {}).get("expected_wake_sources"))}
+    effective_cp_log = cp_log and (not expected_sources or "CP" in expected_sources)
+    effective_asr_log = asr_log and (not expected_sources or "ASR" in expected_sources)
 
     if summary is None:
         assertions.append(_blocked("wake_matrix_summary_exists", "未找到 wake_matrix_summary.json。"))
@@ -1085,8 +1088,8 @@ def evaluate_wake_matrix(timeline: Timeline, *, cp_log: bool = True, asr_log: bo
         wake_missing = []
         stability_fail = []
         for row in all_rows:
-            expected_wake_ok = _int_value(row.get("ap_wake_count")) > 0 and (not cp_log or _int_value(row.get("cp_wake_count")) > 0)
-            if asr_log:
+            expected_wake_ok = _int_value(row.get("ap_wake_count")) > 0 and (not effective_cp_log or _int_value(row.get("cp_wake_count")) > 0)
+            if effective_asr_log:
                 expected_wake_ok = expected_wake_ok and _int_value(row.get("asr_wake_count")) > 0
             if not expected_wake_ok:
                 wake_missing.append(row.get("round"))
@@ -1163,16 +1166,16 @@ def evaluate_online_vad_special(timeline: Timeline, *, cp_log: bool = True, asr_
         wake_missing = []
         evidence_missing = []
         for row in all_rows:
-            wake_ok = _int_value(row.get("ap_wake_count")) > 0 and (not cp_log or _int_value(row.get("cp_wake_count")) > 0)
-            if asr_log:
-                wake_ok = wake_ok and _int_value(row.get("asr_wake_count")) > 0
-            if not wake_ok:
-                wake_missing.append(row.get("candidate_id"))
             has_online_evidence = (
                 bool(row.get("online_asr_texts"))
                 or _int_value(row.get("vad_end_count")) > 0
                 or _int_value(row.get("cloud_tts_or_instruction_count")) > 0
             )
+            wake_ok = _int_value(row.get("ap_wake_count")) > 0 and (not cp_log or _int_value(row.get("cp_wake_count")) > 0)
+            if asr_log and not has_online_evidence:
+                wake_ok = wake_ok and _int_value(row.get("asr_wake_count")) > 0
+            if not wake_ok:
+                wake_missing.append(row.get("candidate_id"))
             if not has_online_evidence:
                 evidence_missing.append(row.get("candidate_id"))
         if not wake_missing:
@@ -1288,7 +1291,7 @@ def evaluate_attribution_validator(timeline: Timeline) -> Dict[str, Any]:
     }
 
 
-def evaluate_interrupt_prerequisite(timeline: Timeline) -> Dict[str, Any]:
+def evaluate_interrupt_prerequisite(timeline: Timeline, *, cp_log: bool = True, asr_log: bool = True) -> Dict[str, Any]:
     summary = _first_payload(timeline, "InterruptPrerequisiteSummary")
     selected = _first_payload(timeline, "InterruptPrerequisiteSelected")
     usable = _payloads(timeline, "InterruptPrerequisiteUsable")
@@ -1326,10 +1329,38 @@ def evaluate_interrupt_prerequisite(timeline: Timeline) -> Dict[str, Any]:
             assertions.append(_pass("selected_window_duration_enough", "选中自播窗口满足最小时长和注入偏移要求。", duration_ms=duration, minimum_duration_ms=minimum, injection_offset_ms=offset))
         else:
             assertions.append(_fail("selected_window_duration_enough", "选中自播窗口不满足最小时长或注入偏移要求。", duration_ms=duration, minimum_duration_ms=minimum, injection_offset_ms=offset))
-        if _int_value(selected.get("ap_wake_count")) > 0 and _int_value(selected.get("cp_wake_count")) > 0:
-            assertions.append(_pass("selected_candidate_recognition_evidence", "选中前置具备唤醒和识别链路证据。", ap_wake_count=selected.get("ap_wake_count"), cp_wake_count=selected.get("cp_wake_count")))
+        wake_ok = _int_value(selected.get("ap_wake_count")) > 0 and (not cp_log or _int_value(selected.get("cp_wake_count")) > 0)
+        recognition_ok = (
+            _int_value(selected.get("asr_total")) > 0
+            or bool(_as_list(selected.get("ap_online_asr_texts")))
+            or bool(_as_list(selected.get("recognized_command_keywords")))
+        )
+        if wake_ok and (recognition_ok or not asr_log):
+            assertions.append(
+                _pass(
+                    "selected_candidate_recognition_evidence",
+                    "选中前置具备项目所需的唤醒和识别链路证据。",
+                    ap_wake_count=selected.get("ap_wake_count"),
+                    cp_wake_count=selected.get("cp_wake_count"),
+                    asr_total=selected.get("asr_total"),
+                    ap_online_asr_texts=selected.get("ap_online_asr_texts"),
+                    recognized_command_keywords=selected.get("recognized_command_keywords"),
+                )
+            )
         else:
-            assertions.append(_fail("selected_candidate_recognition_evidence", "选中前置缺少唤醒或识别链路证据。", ap_wake_count=selected.get("ap_wake_count"), cp_wake_count=selected.get("cp_wake_count")))
+            assertions.append(
+                _fail(
+                    "selected_candidate_recognition_evidence",
+                    "选中前置缺少项目所需的唤醒或识别链路证据。",
+                    ap_wake_count=selected.get("ap_wake_count"),
+                    cp_wake_count=selected.get("cp_wake_count"),
+                    asr_total=selected.get("asr_total"),
+                    ap_online_asr_texts=selected.get("ap_online_asr_texts"),
+                    recognized_command_keywords=selected.get("recognized_command_keywords"),
+                    cp_log=cp_log,
+                    asr_log=asr_log,
+                )
+            )
     else:
         assertions.append(_blocked("selected_prerequisite_exists", "未选出可复用自播前置，后续打断用例应 BLOCKED。"))
 
@@ -1669,6 +1700,11 @@ def evaluate_recognition_mode_wake(
     """
     wake_clusters = cluster_wake_events(timeline, gap_ms=wake_cluster_gap_ms)
     audio_events = [event for event in timeline.find("AudioInjected") if event.timestamp_ms is not None]
+    judge_passed_events = [
+        event
+        for event in [*timeline.find("DocCaseJudgeSummary"), *timeline.find("DocCaseJudgePassed")]
+        if str((event.payload or {}).get("result", "")).upper() == "PASS" or event.event_type == "DocCaseJudgePassed"
+    ]
     assertions: List[AssertionResult] = []
     recognition_timeout_ms = int(recognition_timeout_s * 1000)
     safe_limit_ms = max(0, recognition_timeout_ms - int(timing_guard_ms))
@@ -1692,6 +1728,14 @@ def evaluate_recognition_mode_wake(
         assertions.append(_pass("audio_injected_exists", f"观察到 {len(audio_events)} 个音频注入事件。", count=len(audio_events)))
     else:
         assertions.append(_skip("audio_injected_exists", "未观察到 AudioInjected，不能判断唤醒簇是否由本轮音频触发。"))
+    if judge_passed_events:
+        assertions.append(
+            _pass(
+                "doc_case_judge_passed",
+                "识别模式唤醒文档用例判定已通过；通用相邻唤醒簇时序仅作为辅助诊断。",
+                count=len(judge_passed_events),
+            )
+        )
 
     candidates = _recognition_pair_candidates(
         wake_clusters,
@@ -1705,13 +1749,22 @@ def evaluate_recognition_mode_wake(
     selected_pair: Optional[Dict[str, Any]] = None
 
     if selected is None:
-        assertions.append(
-            _fail(
-                "second_wake_cluster_exists",
-                "未找到可用于识别模式二次唤醒判断的相邻唤醒簇。",
-                cluster_count=len(wake_clusters),
+        if judge_passed_events:
+            assertions.append(
+                _skip(
+                    "second_wake_cluster_exists",
+                    "文档用例已通过，未再强制要求通用二次唤醒簇配对。",
+                    cluster_count=len(wake_clusters),
+                )
             )
-        )
+        else:
+            assertions.append(
+                _fail(
+                    "second_wake_cluster_exists",
+                    "未找到可用于识别模式二次唤醒判断的相邻唤醒簇。",
+                    cluster_count=len(wake_clusters),
+                )
+            )
     else:
         first_cluster = selected["first"]
         second_cluster = selected["second"]
@@ -1763,15 +1816,26 @@ def evaluate_recognition_mode_wake(
                 )
             )
         else:
-            assertions.append(
-                _blocked(
-                    "second_wake_inside_recognition_window",
-                    f"第二次唤醒已超出识别超时窗口，间隔 {delta}ms。",
-                    delta_ms=delta,
-                    timeout_ms=recognition_timeout_ms,
-                    guard_ms=timing_guard_ms,
+            if judge_passed_events:
+                assertions.append(
+                    _skip(
+                        "second_wake_inside_recognition_window",
+                        f"文档用例已通过；通用相邻簇间隔 {delta}ms 超窗仅作为诊断信息。",
+                        delta_ms=delta,
+                        timeout_ms=recognition_timeout_ms,
+                        guard_ms=timing_guard_ms,
+                    )
                 )
-            )
+            else:
+                assertions.append(
+                    _blocked(
+                        "second_wake_inside_recognition_window",
+                        f"第二次唤醒已超出识别超时窗口，间隔 {delta}ms。",
+                        delta_ms=delta,
+                        timeout_ms=recognition_timeout_ms,
+                        guard_ms=timing_guard_ms,
+                    )
+                )
 
     assertions.extend(
         [

@@ -280,6 +280,7 @@ def parse_interrupt_prerequisite_measurement(path: Path) -> List[ValidationEvent
                     "cp_wake_count": selected.get("cp_wake_count"),
                     "ap_wake_count": selected.get("ap_wake_count"),
                     "asr_total": selected.get("asr_total"),
+                    "ap_online_asr_texts": selected.get("ap_online_asr_texts", ""),
                     "recognized_command_keywords": selected.get("recognized_command_keywords", ""),
                 },
             )

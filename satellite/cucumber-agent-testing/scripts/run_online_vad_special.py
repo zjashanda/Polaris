@@ -31,7 +31,14 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from run_cucumber import start_managed_session, stop_managed_session  # noqa: E402
 from polaris_env import load_default_env  # noqa: E402
-from run_wake_stress import asr_wake_count, gather_logs, sum_line_count, write_round_logs  # noqa: E402
+from run_wake_stress import (  # noqa: E402
+    asr_wake_count,
+    expected_wake_sources,
+    gather_logs,
+    sum_line_count,
+    wake_role_requirements,
+    write_round_logs,
+)
 from tools.audio.polaris_audio_builder import build_sequence  # noqa: E402
 from tools.execution.polaris_case_runner import run_playback  # noqa: E402
 
@@ -165,6 +172,15 @@ def run_candidate(
     vad_end_count = count_vad_end(clean)
     cloud_tts_count = int(metrics.get("ap_cloud_tts_play_count", 0) or 0) + int(metrics.get("ap_instruction_broadcast_count", 0) or 0)
     coverage = text_coverage(str(candidate.get("expected_text", "")), online_texts)
+    online_evidence_seen = bool(online_texts) or cloud_tts_count > 0 or vad_end_count > 0
+    cp_required, asr_required = wake_role_requirements()
+    missing_wake_sources: List[str] = []
+    if cp_required and cp_wake < 1:
+        missing_wake_sources.append("CP_WAKE")
+    if ap_wake < 1:
+        missing_wake_sources.append("AP_WAKE")
+    if asr_required and asr_wake < 1 and not online_evidence_seen:
+        missing_wake_sources.append("ASR_WAKE")
     if playback.returncode != 0:
         result = "BLOCKED"
         attribution = "audio_playback_or_device_key"
@@ -173,11 +189,14 @@ def run_candidate(
         result = "BLOCKED"
         attribution = "serial_logger_or_ports"
         reason = "播放成功但串口窗口无日志。"
-    elif cp_wake < 1 or ap_wake < 1 or asr_wake < 1:
+    elif missing_wake_sources:
         result = "FAIL"
         attribution = "wake_precondition_for_online_vad"
-        reason = f"在线 VAD 前置唤醒证据不足，cp/ap/asr={cp_wake}/{ap_wake}/{asr_wake}。"
-    elif not online_texts and cloud_tts_count <= 0 and vad_end_count <= 0:
+        reason = (
+            f"在线 VAD 前置唤醒证据不足，缺失={','.join(missing_wake_sources)}，"
+            f"cp/ap/asr={cp_wake}/{ap_wake}/{asr_wake}。"
+        )
+    elif not online_evidence_seen:
         result = "FAIL"
         attribution = "online_vad_or_cloud_path"
         reason = "唤醒成功后未观察到在线 ASR、VAD end 或云端播报证据。"
@@ -274,6 +293,7 @@ def summarize(output_dir: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "attribution": attribution,
         "reason": reason,
         "run_dir": rel(output_dir),
+        "expected_wake_sources": expected_wake_sources(),
         "counts": counts,
         "candidate_count": len(rows),
         "needs_review_count": len(needs_review),
@@ -289,6 +309,7 @@ def render_report(payload: Dict[str, Any]) -> str:
         f"- 归因：`{payload.get('attribution')}`",
         f"- 原因：{payload.get('reason')}",
         f"- 候选数：`{payload.get('candidate_count')}`",
+        f"- 期望唤醒证据：`{'/'.join(payload.get('expected_wake_sources') or ['CP', 'AP', 'ASR'])}`",
         f"- 待复核：`{payload.get('needs_review_count')}`",
         f"- 结果分布：`{json.dumps(payload.get('counts', {}), ensure_ascii=False)}`",
         "",
@@ -383,4 +404,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

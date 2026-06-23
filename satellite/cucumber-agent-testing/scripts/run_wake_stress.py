@@ -141,6 +141,50 @@ def asr_wake_count(metrics: Dict[str, Any]) -> int:
     return int(metrics.get("wb_wake_count", 0) or 0) + int(metrics.get("wb_online_wake_count", 0) or 0)
 
 
+def wake_role_requirements(env: Optional[Dict[str, Any]] = None) -> Tuple[bool, bool]:
+    """Return whether CP/ASR wake sources are expected for this project."""
+    try:
+        payload = env if env is not None else load_env()
+    except Exception:
+        payload = {}
+    serial = payload.get("serial", {}) if isinstance(payload.get("serial"), dict) else {}
+    ports = serial.get("ports", {}) if isinstance(serial.get("ports"), dict) else {}
+    profile = str(payload.get("assertion_profile", "") or "").strip().lower()
+    project_type = str(payload.get("project_type", "") or "").strip().lower()
+    cp_required = bool(str(ports.get("cp", "") or "").strip())
+    if profile == "ap_upper_no_cp" or project_type == "ws63":
+        cp_required = False
+    asr_required = bool(str(ports.get("asr", "") or ports.get("upper", "") or "").strip())
+    if profile == "ap_upper_no_cp" or project_type == "ws63":
+        # WS63 AP logs already contain the wake/recognizer handoff; the upper
+        # port can be silent in wake-only windows, so do not make it mandatory.
+        asr_required = False
+    return cp_required, asr_required
+
+
+def expected_wake_sources(env: Optional[Dict[str, Any]] = None) -> List[str]:
+    cp_required, asr_required = wake_role_requirements(env)
+    sources: List[str] = []
+    if cp_required:
+        sources.append("CP")
+    sources.append("AP")
+    if asr_required:
+        sources.append("ASR")
+    return sources
+
+
+def wake_sources_complete(metrics: Dict[str, Any], env: Optional[Dict[str, Any]] = None) -> Tuple[bool, List[str]]:
+    cp_required, asr_required = wake_role_requirements(env)
+    missing: List[str] = []
+    if cp_required and int(metrics.get("cp_wake_count", 0) or 0) < 1:
+        missing.append("CP_WAKE")
+    if int(metrics.get("ap_wake_count", 0) or 0) < 1:
+        missing.append("AP_WAKE")
+    if asr_required and asr_wake_count(metrics) < 1:
+        missing.append("ASR_WAKE")
+    return not missing, missing
+
+
 def gather_logs(session_dir: Path, start_dt: datetime, end_dt: datetime) -> Tuple[Dict[str, List[str]], Dict[str, List[str]], dict, dict, List[str]]:
     raw_logs: Dict[str, List[str]] = {}
     for port in configured_log_ports():
@@ -175,18 +219,9 @@ def classify_wake_round(playback_returncode: int, metrics: Dict[str, Any], line_
         return "BLOCKED", "serial_logger_or_ports", "播放成功但串口窗口无日志。", False
     if int(metrics.get("crash_marker_count", 0) or 0) > 0 or int(metrics.get("boot_marker_count", 0) or 0) > 0:
         return "FAIL", "firmware_device_stability", "窗口内出现 reboot/crash 标记。", True
-    cp_wake = int(metrics.get("cp_wake_count", 0) or 0)
-    ap_wake = int(metrics.get("ap_wake_count", 0) or 0)
-    asr_wake = asr_wake_count(metrics)
-    if cp_wake >= 1 and ap_wake >= 1 and asr_wake >= 1:
-        return "PASS", "pass", "CP/AP/ASR 均观察到目标唤醒闭环。", True
-    missing = []
-    if cp_wake < 1:
-        missing.append("CP_WAKE")
-    if ap_wake < 1:
-        missing.append("AP_WAKE")
-    if asr_wake < 1:
-        missing.append("ASR_WAKE")
+    complete, missing = wake_sources_complete(metrics)
+    if complete:
+        return "PASS", "pass", f"{'/'.join(expected_wake_sources())} 均观察到目标唤醒闭环。", True
     return "FAIL", "firmware_device_or_audio_path", "播放成功但目标唤醒闭环缺失：" + ",".join(missing), True
 
 
@@ -272,6 +307,7 @@ class StressRun:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.env = load_env()
+        self.expected_wake_sources = expected_wake_sources(self.env)
         device_cfg = self.env.get("device", {}) if isinstance(self.env.get("device"), dict) else {}
         self.wake_word = args.wake_word or str(self.env.get("current_wakeup_word") or device_cfg.get("wake_word") or "小美小美")
         self.device_key = str(args.device_key or default_playback_device_key(self.env)).strip()
@@ -312,7 +348,7 @@ class StressRun:
   @first_wake_rate @stress
   场景: 首次唤醒率压测
     当 在待唤醒状态循环播放唤醒词 "{self.wake_word}"
-    那么 统计 CP/AP/ASR 唤醒闭环成功率
+    那么 统计 {"/".join(self.expected_wake_sources)} 唤醒闭环成功率
     而且 播放失败、串口缺失、设备重启和崩溃需要单独归因
 
   @recognition_mode_wake_rate @stress
@@ -335,7 +371,7 @@ class StressRun:
                 {
                     "scenario_id": "first_wake_rate",
                     "source_test_item": "唤醒/首次唤醒",
-                    "assertions": ["playback=0", "cp_wake>=1", "ap_wake>=1", "asr_wake>=1"],
+                    "assertions": ["playback=0"] + [f"{source.lower()}_wake>=1" for source in self.expected_wake_sources],
                 },
                 {
                     "scenario_id": "recognition_mode_wake_rate",
@@ -343,9 +379,7 @@ class StressRun:
                     "assertions": [
                         "pre_first_wake_success=true",
                         "target_timing_bucket=SAFE",
-                        "target_cp_wake>=1",
-                        "target_ap_wake>=1",
-                        "target_asr_wake>=1",
+                        *[f"target_{source.lower()}_wake>=1" for source in self.expected_wake_sources],
                     ],
                 },
             ],
@@ -396,6 +430,7 @@ class StressRun:
             "wake_word": self.wake_word,
             "device_key": self.device_key,
             "playback_device": playback_device_label(self.device_key),
+            "expected_wake_sources": self.expected_wake_sources,
             "wake_audio_duration_ms": self.wake_audio_duration_ms,
             "round_total": len(self.rows),
             "scenarios": scenario_payloads,
@@ -434,7 +469,7 @@ class StressRun:
                 "",
                 "## 统计口径",
                 "",
-                "- `PASS`：目标唤醒在有效窗口内完成 CP/AP/ASR 闭环。",
+                f"- `PASS`：目标唤醒在有效窗口内完成 {'/'.join(payload.get('expected_wake_sources') or ['CP', 'AP', 'ASR'])} 闭环。",
                 "- `FAIL`：播放和串口正常，但目标唤醒闭环缺失或出现 reboot/crash。",
                 "- `BLOCKED`：播放、串口、前置首次唤醒、联网/环境导致无法验证。",
                 "- `TIMING_AMBIGUOUS`：识别模式目标唤醒落入临界超时灰区，不计入主成功率。",
@@ -561,12 +596,8 @@ class StressRun:
             ap_wake_ts = find_ap_wake_time(clean)
             anchor_ts, timeout_value, anchor_line = find_session_anchor(clean, ap_wake_ts)
             last_payload = (raw, clean, window_summary, metrics, key_lines, anchor_ts, timeout_value, anchor_line)
-            if (
-                int(metrics.get("cp_wake_count", 0) or 0) >= 1
-                and int(metrics.get("ap_wake_count", 0) or 0) >= 1
-                and asr_wake_count(metrics) >= 1
-                and anchor_ts is not None
-            ):
+            wake_complete, _missing = wake_sources_complete(metrics, self.env)
+            if wake_complete and anchor_ts is not None:
                 return ("PASS", *last_payload)
             time.sleep(0.25)
         return ("PRECONDITION_FAIL", *last_payload)
@@ -668,7 +699,7 @@ class StressRun:
         else:
             result, attribution, reason, counted = classify_wake_round(target_playback.returncode, metrics, line_count)
             if result == "PASS" and not session_refresh_observed(clean):
-                reason += "；本轮未观察到 session timer refresh，仅按 CP/AP/ASR 闭环计 PASS。"
+                reason += f"；本轮未观察到 session timer refresh，仅按 {'/'.join(self.expected_wake_sources)} 闭环计 PASS。"
 
         if should_store_full_logs(result, self.round_index, int(self.args.sample_pass_logs_every)):
             write_round_logs(round_dir, raw, clean)
