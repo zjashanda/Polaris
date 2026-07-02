@@ -32,6 +32,14 @@ Autobus 原台架默认是 `COM22/COM21/COM23`。在 Polaris 中执行时必须�
 7. 保存 `preflight.json`、`auto_burn_stdout.log`、`summary.json`、`summary.md` 到 debug 目录。
 
 真实烧录必须显式携带 `--allow-side-effects`；只验证命令构造时使用 `--dry-run`。
+给压缩包烧录时，版本判断必须来自压缩包内部内容，不允许只看 zip 文件名。包装脚本会读取：
+
+- `BuildInfo.txt`：`Firmware Version`、`VenusA BuildInfo`、`WS63 BuildInfo`。
+- `config.json` / `config_hex.json`：`fw.img`、`fw.hex`、`ws63-liteos-app_all.fwpkg` 的内部版本、大小和 md5。
+- `Other/VenusA_build_*.log`、`Other/WS63_build_*.log`：实际构建 commit/time。
+- 固件文件存在性：`fw.hex`/`fw.img` 和 `ws63-liteos-app_all.fwpkg`。
+
+Windows 路径中包含空格、括号时，必须由包装脚本生成临时 batch 后再进入 `chcp 936`，不要手工拼接 `cmd /c ... "<path (2)>"`，否则底层参数可能被拆分。
 
 示例：
 
@@ -43,14 +51,36 @@ python tools\firmware\polaris_venusws63_auto_burn.py `
 python tools\firmware\polaris_venusws63_auto_burn.py `
   --firmware tools\fw\Midea_VenusA_WS63_35.03.01.01.18.26.06.04.00.04_20260616_171724.zip `
   --allow-side-effects
+
+python tools\firmware\polaris_venusws63_auto_burn.py `
+  --firmware <固件zip或解压目录> `
+  --allow-side-effects `
+  --verify-after-burn
 ```
 
 ## 烧录成功标准
 
 - VenusA 烧录 stdout 出现 `MD5 CHECK SUCCESS` 和 `FLASH DOWNLOAD SUCCESS`。
 - WS63 最新 `tools\VenusA+WS63\BurnTool_Gold\optLog\optLog_*.txt` 出现 `烧写结果：成功`。
+- WS63 退出产测模式时，`AT+FTM=0` 返回 `+FTM SWITCH: start` 和 `OK`。
 - `auto_burn.py` 返回码为 0。
-- 烧录后执行 `version`，`Project Version` 必须为目标固件版本。
+- 烧录后执行 `version`，`Project Version` 必须等于包内 `BuildInfo.txt` 的 `Firmware Version`，或等于 `config.json`/`config_hex.json` 中 `fw.img`/`fw.hex` 的版本。
+
+## 烧录后版本核对口径
+
+`--verify-after-burn` 会在真实烧录成功后自动读取 AP `version` 和 `deviceinfo`，并把结果写到 run 目录：
+
+- `package_metadata`：包内版本、构建信息和固件文件清单。
+- `post_burn_verify/COM*_version.log`：设备 `Project Version` 原始日志。
+- `post_burn_verify/COM*_deviceinfo.log`：设备 SN、IoT ID、MAC、IP。
+- `post_burn_verify/post_burn_verify.json` / `.md`：期望版本、设备版本和 PASS/FAIL。
+
+如果需要进一步证明 WS63 运行固件也来自同一个包，烧录后重启并同时抓 COM11/COM12 启动日志：
+
+1. COM11/AP 关注 `ListenAI APP Build Info`、`Project Version`、`Boot Reason`。
+2. COM12/upper 关注 `ListenAI APP Build Info`、`ws63 SDK Version`、联网初始化日志。
+3. VenusA 运行 BuildInfo 必须与包内 `VenusA BuildInfo` 或 VenusA build log 一致。
+4. WS63 运行 BuildInfo 以 commit 为主、时间为辅，与 `Other/WS63_build_*.log` 对齐；若 `BuildInfo.txt` header 与 build log 有秒级差异，优先看 build log 和提交号。
 
 如果 VenusA 已成功但 WS63 失败，优先用 `--skip-venusa` 只重烧 WS63；不要无证据地反复重烧 VenusA。
 

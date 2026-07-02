@@ -137,7 +137,7 @@ Polaris 用来做嵌入式语音设备的本地真机验证，核心是把“用
 - 联网恢复、one-shot、唤醒矩阵、误唤醒、在线 VAD。
 - 在线基础命令、音乐、相声、新闻、问答混合压测。
 - 误唤醒/误识别记录：额外 wake/ASR/command 都要保留并参与归因。
-- VenusA+WS63 固件自动烧录包装、OTA 轮次统计、OTA 邮件安全 HTML 分析报告。
+- VenusA+WS63 压缩包固件自动烧录、包内版本解析、烧录后 `version/deviceinfo` 核对、OTA 轮次统计、OTA 邮件安全 HTML 分析报告。
 
 ## 常用命令
 
@@ -148,6 +148,7 @@ python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cuc
 python satellite\cucumber-agent-testing\scripts\run_optimized_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_full_duplex.example.json --mode dry-run
 python satellite\cucumber-agent-testing\scripts\run_task.py --task satellite\cucumber-agent-testing\tasks\examples\online_mixed_stress.example.json --print-command
 python tools\firmware\polaris_venusws63_auto_burn.py --firmware tools\fw\Midea_VenusA_WS63_35.03.01.01.18.26.06.04.00.04_20260616_171724.zip --dry-run
+python tools\firmware\polaris_venusws63_auto_burn.py --firmware <固件zip或解压目录> --allow-side-effects --verify-after-burn
 python tools\ota\build_venus_ota_html_report.py --task-dir result\venus_ota_tasks\<TASK_DIR>
 ```
 
@@ -163,6 +164,9 @@ python tools\ota\build_venus_ota_html_report.py --task-dir result\venus_ota_task
 - API 场景要先切设备端 UAT/SIT/PRO 环境，再调用接口。
 - 云控 adapter 必须沿用当前任务/env-file 的项目配置；WB01/WS63 切换时不要让旧 `config/` 或根目录 `active_project` 影响 API 辅助脚本。
 - VenusA+WS63 烧录必须走 `tools/firmware/polaris_venusws63_auto_burn.py`，由它读取 `polaris.local.json` 的 AP/upper/control 端口；真实烧录必须加 `--allow-side-effects`，只构造命令用 `--dry-run`。
+- 用户给 VenusA+WS63 固件压缩包时，先做 dry-run；确认后执行 `--allow-side-effects --verify-after-burn`。版本判断必须读取压缩包内部 `BuildInfo.txt`、`config.json`、`config_hex.json`、`Other/*_build_*.log` 和固件文件名/版本，不能只依据 zip 文件名。
+- 烧录闭环标准：VenusA stdout 有 `MD5 CHECK SUCCESS` / `FLASH DOWNLOAD SUCCESS`，WS63 stdout/optLog 有 `烧写结果：成功`，`AT+FTM=0` 返回 `OK`，脚本返回 0；随后 AP `version` 的 `Project Version` 必须等于包内 `Firmware Version` 或 `fw.hex/fw.img` 版本。
+- 如需确认 WS63 运行侧 BuildInfo，烧录后重启并同时抓 COM11/COM12 启动日志；WS63 以运行日志中的 `ListenAI APP Build Info` 与包内 WS63 build log 的 commit/time 对齐为准。若 `BuildInfo.txt` header 与 build log 存在秒级差异，优先看提交号和 build log，不直接判错包。
 - WS63 烧录工具必须在 Windows `chcp 936` 语境下运行，避免 `BurnTool_Gold\optLog` 中 `烧写结果：成功` 乱码成 `????` 导致误判。
 - 烧录后必须用 `version`/`deviceinfo` 确认物理固件版本，再执行联网、唤醒和识别验证；`vir_ver` 只代表云端门禁覆盖，不代表真实固件已更新。
 
