@@ -1,10 +1,13 @@
 ---
-name: polaris-device-validation
+name: Polaris
+description: 语音设备真机 BDD 验证框架：Cucumber 用例 + 固定 runner + Event Runtime 事件断言，输出 PASS/FAIL/BLOCKED/TIMING_AMBIGUOUS；支持 WS63 烧录与交互时延追踪。Use when 需要把语音设备需求转成可执行真机用例、复盘串口/声卡证据或跑长稳验证。
 version: 2.0.0
 summary: Polaris 语音设备 BDD + Event Runtime 真机验证 skill。
 ---
 
 # Polaris 语音设备验证 Skill
+
+> 本 skill 是 `zjashanda/polaris-device-validation`（已归档、`replaced_by=Polaris`）的后续维护版本。两者同源，**不要同时安装**：归档仓库只作历史参照，新任务一律用本仓库。
 
 本 skill 已切换到新方案：Cucumber/BDD 用例入口 + Event Runtime 事件断言 + 项目化本机配置。旧方案已迁移到 `oldTime/`，不再作为执行入口。
 
